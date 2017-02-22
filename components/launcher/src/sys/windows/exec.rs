@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2017 Chef Software Inc. and/or applicable contributors
+// Copyright (c) 2017 Chef Software Inc. and/or applicable contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod filesystem;
-pub mod ffi;
-pub mod process;
-pub mod signals;
-pub mod system;
-pub mod users;
+use std::ffi::OsStr;
+
+use core::os::process::windows_child::Child;
+use launcher_protocol::message::launcher::Spawn;
+
+use error::Result;
+
+fn run(cmd: Spawn) -> Result<Service> {
+    let ps_cmd = format!("iex $(gc {} | out-string)", path.as_ref().to_string_lossy());
+    let args = vec!["-command", ps_cmd.as_str()];
+    Child::spawn("powershell.exe", args, &pkg.env)?;
+    // JW TODO: Get the PID
+    Ok(0)
+}

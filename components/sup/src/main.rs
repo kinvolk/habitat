@@ -13,6 +13,7 @@
 // limitations under the License.
 
 extern crate habitat_common as common;
+#[macro_use]
 extern crate habitat_core as hcore;
 #[macro_use]
 extern crate habitat_sup as sup;
@@ -34,8 +35,7 @@ use ansi_term::Colour::{Red, Yellow};
 use clap::{App, ArgMatches};
 use common::ui::UI;
 use hcore::env as henv;
-use hcore::crypto::{default_cache_key_path, SymKey};
-use hcore::crypto::init as crypto_init;
+use hcore::crypto::{self, default_cache_key_path, SymKey};
 use hcore::package::{PackageArchive, PackageIdent};
 use hcore::url::{DEFAULT_DEPOT_URL, DEPOT_URL_ENVVAR};
 use url::Url;
@@ -58,16 +58,20 @@ static RING_ENVVAR: &'static str = "HAB_RING";
 static RING_KEY_ENVVAR: &'static str = "HAB_RING_KEY";
 
 fn main() {
-    env_logger::init().unwrap();
-    enable_features_from_env();
+    boot();
     if let Err(e) = start() {
         println!("{}", e);
         std::process::exit(1);
     }
 }
 
+fn boot() {
+    env_logger::init().unwrap();
+    enable_features_from_env();
+    crypto::init();
+}
+
 fn start() -> Result<()> {
-    crypto_init();
     let app_matches = cli().get_matches();
     match app_matches.subcommand() {
         ("bash", Some(m)) => sub_bash(m),
@@ -223,10 +227,10 @@ fn cli<'a, 'b>() -> App<'a, 'b> {
 
 fn sub_bash(m: &ArgMatches) -> Result<()> {
     if m.is_present("VERBOSE") {
-        sup::output::set_verbose(true);
+        hcore::output::set_verbose(true);
     }
     if m.is_present("NO_COLOR") {
-        sup::output::set_no_color(true);
+        hcore::output::set_no_color(true);
     }
 
     command::shell::bash()
@@ -241,10 +245,10 @@ fn sub_config(m: &ArgMatches) -> Result<()> {
 
 fn sub_load(m: &ArgMatches) -> Result<()> {
     if m.is_present("VERBOSE") {
-        sup::output::set_verbose(true);
+        hcore::output::set_verbose(true);
     }
     if m.is_present("NO_COLOR") {
-        sup::output::set_no_color(true);
+        hcore::output::set_no_color(true);
     }
     let cfg = mgrcfg_from_matches(m)?;
     let ident = PackageIdent::from_str(m.value_of("PKG_IDENT").unwrap())?;
@@ -266,10 +270,10 @@ fn sub_load(m: &ArgMatches) -> Result<()> {
 
 fn sub_unload(m: &ArgMatches) -> Result<()> {
     if m.is_present("VERBOSE") {
-        sup::output::set_verbose(true);
+        hcore::output::set_verbose(true);
     }
     if m.is_present("NO_COLOR") {
-        sup::output::set_no_color(true);
+        hcore::output::set_no_color(true);
     }
     let cfg = mgrcfg_from_matches(m)?;
     let ident = PackageIdent::from_str(m.value_of("PKG_IDENT").unwrap())?;
@@ -288,10 +292,10 @@ fn sub_run(m: &ArgMatches) -> Result<()> {
 
 fn sub_sh(m: &ArgMatches) -> Result<()> {
     if m.is_present("VERBOSE") {
-        sup::output::set_verbose(true);
+        hcore::output::set_verbose(true);
     }
     if m.is_present("NO_COLOR") {
-        sup::output::set_no_color(true);
+        hcore::output::set_no_color(true);
     }
 
     command::shell::sh()
@@ -299,10 +303,10 @@ fn sub_sh(m: &ArgMatches) -> Result<()> {
 
 fn sub_start(m: &ArgMatches) -> Result<()> {
     if m.is_present("VERBOSE") {
-        sup::output::set_verbose(true);
+        hcore::output::set_verbose(true);
     }
     if m.is_present("NO_COLOR") {
-        sup::output::set_no_color(true);
+        hcore::output::set_no_color(true);
     }
     let cfg = mgrcfg_from_matches(m)?;
     let mut maybe_local_artifact: Option<&str> = None;
@@ -361,10 +365,10 @@ fn sub_start(m: &ArgMatches) -> Result<()> {
 
 fn sub_status(m: &ArgMatches) -> Result<()> {
     if m.is_present("VERBOSE") {
-        sup::output::set_verbose(true);
+        hcore::output::set_verbose(true);
     }
     if m.is_present("NO_COLOR") {
-        sup::output::set_no_color(true);
+        hcore::output::set_no_color(true);
     }
     let cfg = mgrcfg_from_matches(m)?;
     if !Manager::is_running(&cfg)? {
@@ -397,10 +401,10 @@ fn sub_status(m: &ArgMatches) -> Result<()> {
 
 fn sub_stop(m: &ArgMatches) -> Result<()> {
     if m.is_present("VERBOSE") {
-        sup::output::set_verbose(true);
+        hcore::output::set_verbose(true);
     }
     if m.is_present("NO_COLOR") {
-        sup::output::set_no_color(true);
+        hcore::output::set_no_color(true);
     }
     let cfg = mgrcfg_from_matches(m)?;
     let ident = PackageIdent::from_str(m.value_of("PKG_IDENT").unwrap())?;

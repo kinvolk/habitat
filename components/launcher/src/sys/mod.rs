@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2017 Chef Software Inc. and/or applicable contributors
+// Copyright (c) 2017 Chef Software Inc. and/or applicable contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod filesystem;
-pub mod ffi;
-pub mod process;
-pub mod signals;
-pub mod system;
-pub mod users;
+pub use self::imp::*;
+
+#[cfg(unix)]
+#[path = "unix/mod.rs"]
+mod imp;
+
+#[cfg(windows)]
+#[path = "windows/mod.rs"]
+mod imp;

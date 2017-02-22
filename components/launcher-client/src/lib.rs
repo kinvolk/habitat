@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2017 Chef Software Inc. and/or applicable contributors
+// Copyright (c) 2017 Chef Software Inc. and/or applicable contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod filesystem;
-pub mod ffi;
-pub mod process;
-pub mod signals;
-pub mod system;
-pub mod users;
+extern crate habitat_core as core;
+extern crate habitat_launcher_protocol as protocol;
+extern crate ipc_channel;
+extern crate protobuf;
+
+pub mod error;
+mod client;
+
+pub use client::LauncherCli;
+pub use error::Error;
+use error::Result;
+
+pub fn env_pipe() -> Result<String> {
+    core::env::var(protocol::LAUNCHER_PIPE_ENV).map_err(|_| Error::NoEnvPipe)
+}
