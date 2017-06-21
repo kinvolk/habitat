@@ -16,7 +16,7 @@ use std::error;
 use std::ffi;
 use std::fmt;
 use std::io;
-use std::path;
+use std::path::{self, PathBuf};
 use std::result;
 
 use depot_client;
@@ -39,7 +39,7 @@ pub enum Error {
     DockerFileSharingNotEnabled,
     DockerImageNotFound(String),
     DockerNetworkDown(String),
-    ExecCommandNotFound(String),
+    ExecCommandNotFound(PathBuf),
     FFINulError(ffi::NulError),
     FileNotFound(String),
     HabitatCommon(common::Error),
@@ -107,7 +107,10 @@ impl fmt::Display for Error {
                 )
             }
             Error::ExecCommandNotFound(ref c) => {
-                format!("`{}' was not found on the filesystem or in PATH", c)
+                format!(
+                    "`{}' was not found on the filesystem or in PATH",
+                    c.display()
+                )
             }
             Error::FFINulError(ref e) => format!("{}", e),
             Error::FileNotFound(ref e) => format!("File not found at: {}", e),
