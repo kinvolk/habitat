@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use error::{Error, Result};
 use hab_net::server::ZMQ_CONTEXT;
 use protobuf::Message;
 use protocol::jobsrv::{JobLogComplete, JobLogChunk};
-use std::io::{BufRead, BufReader};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
 use std::process;
 use super::workspace::Workspace;
 use zmq;
@@ -32,6 +34,7 @@ const LOG_COMPLETE: &'static str = "C";
 pub struct LogPipe {
     job_id: u64,
     sock: zmq::Socket,
+    log_file: File,
 }
 
 impl LogPipe {
@@ -41,9 +44,15 @@ impl LogPipe {
         sock.set_linger(5000).unwrap();
         sock.connect(INPROC_ADDR).unwrap();
 
+        let path = workspace.root().join(format!(
+            "log_pipe-{}.log",
+            workspace.job.get_id()
+        ));
+
         LogPipe {
             job_id: workspace.job.get_id(),
             sock: sock,
+            log_file: File::create(path).expect("Unable to create LogPipe log file"),
         }
     }
 
@@ -52,26 +61,57 @@ impl LogPipe {
     ///
     /// Contents of STDOUT are streamed before any from STDERR (if
     /// any).
-    pub fn pipe(&mut self, process: &mut process::Child) {
+    pub fn pipe(&mut self, process: &mut process::Child) -> Result<()> {
         let mut line_count = 0;
 
+        writeln!(&self.log_file, "About to log stdout")?;
         if let Some(ref mut stdout) = process.stdout {
             let reader = BufReader::new(stdout);
-            line_count = self.stream_lines(reader, line_count);
+            line_count = self.stream_lines(reader, line_count)?;
         }
+        writeln!(&self.log_file, "Finished logging stdout")?;
+        writeln!(&self.log_file, "About to log stderr")?;
         if let Some(ref mut stderr) = process.stderr {
             let reader = BufReader::new(stderr);
             // not capturing line_count output because we don't use it
-            self.stream_lines(reader, line_count);
+            self.stream_lines(reader, line_count)?;
         }
+        writeln!(&self.log_file, "Finished logging stderr")?;
 
+        writeln!(
+            &self.log_file,
+            "About to tell log_forwarder that the job is complete"
+        )?;
         // Signal that the log is finished
         let mut complete = JobLogComplete::new();
         complete.set_job_id(self.job_id);
-        self.sock.send_str(LOG_COMPLETE, zmq::SNDMORE).unwrap();
-        self.sock
-            .send(complete.write_to_bytes().unwrap().as_slice(), 0)
-            .unwrap();
+        if let Err(e) = self.sock.send_str(LOG_COMPLETE, zmq::SNDMORE) {
+            writeln!(
+                &self.log_file,
+                "ZMQ error when sending LOG_COMPLETE: {:?}",
+                &e
+            )?;
+            return Err(Error::Zmq(e));
+        }
+        if let Err(e) = self.sock.send(
+            complete.write_to_bytes().unwrap().as_slice(),
+            0,
+        )
+        {
+            writeln!(
+                &self.log_file,
+                "ZMQ error when sending JobLogComplete {:?} : {:?}",
+                &complete,
+                &e
+            )?;
+            return Err(Error::Zmq(e));
+        }
+        writeln!(
+            &self.log_file,
+            "Finished telling log_forwarder that the job is complete"
+        )?;
+
+        Ok(())
     }
 
     /// Send the lines of the reader out over the ZMQ socket as
@@ -87,22 +127,45 @@ impl LogPipe {
     /// (I wrestled with the type system for an alternative
     /// implementation, but it defeated me :( This seems passable in
     /// the meantime.)
-    fn stream_lines<B: BufRead>(&mut self, reader: B, mut line_num: u64) -> u64 {
+    fn stream_lines<B: BufRead>(&mut self, reader: B, mut line_num: u64) -> Result<u64> {
         for line in reader.lines() {
             line_num = line_num + 1;
             let mut l: String = line.unwrap();
             l = l + EOL_MARKER;
+
+            write!(&self.log_file, "Current line = {}", l)?;
 
             let mut chunk = JobLogChunk::new();
             chunk.set_job_id(self.job_id);
             chunk.set_seq(line_num);
             chunk.set_content(l.clone());
 
-            self.sock.send_str(LOG_LINE, zmq::SNDMORE).unwrap();
-            self.sock
-                .send(chunk.write_to_bytes().unwrap().as_slice(), 0)
-                .unwrap();
+            if let Err(e) = self.sock.send_str(LOG_LINE, zmq::SNDMORE) {
+                writeln!(&self.log_file, "ZMQ error when sending LOG_LINE: {:?}", &e)?;
+                return Err(Error::Zmq(e));
+            }
+            if let Err(e) = self.sock.send(
+                chunk.write_to_bytes().unwrap().as_slice(),
+                0,
+            )
+            {
+                writeln!(
+                    &self.log_file,
+                    "ZMQ error when sending JobLogChunk {:?} : {:?}",
+                    &chunk,
+                    &e
+                )?;
+                return Err(Error::Zmq(e));
+            }
+            writeln!(&self.log_file, "Finished sending ^ to log_forwarder")?;
         }
-        line_num
+
+        Ok(line_num)
+    }
+}
+
+impl Drop for LogPipe {
+    fn drop(&mut self) {
+        self.log_file.sync_all().expect("Unable to sync log file");
     }
 }

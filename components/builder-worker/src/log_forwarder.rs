@@ -13,8 +13,10 @@
 // limitations under the License.
 
 use config::Config;
-use error::Result;
+use error::{Error, Result};
 use hab_net::server::ZMQ_CONTEXT;
+use std::fs::File;
+use std::io::Write;
 use std::sync::{mpsc, Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -32,12 +34,18 @@ pub struct LogForwarder {
     /// The configuration of the worker server; used to obtain job
     /// server connection information.
     config: Arc<RwLock<Config>>,
+    /// Log file for debugging this process
+    log_file: File,
 }
 
 impl LogForwarder {
     pub fn new(config: Arc<RwLock<Config>>) -> Result<Self> {
         let intake_sock = (**ZMQ_CONTEXT).as_mut().socket(zmq::PULL)?;
         let output_sock = (**ZMQ_CONTEXT).as_mut().socket(zmq::DEALER)?;
+        let path = {
+            let cfg = config.read().unwrap();
+            cfg.log_path.join("log_forwarder.log")
+        };
 
         output_sock.set_sndhwm(5000)?;
         output_sock.set_linger(5000)?;
@@ -47,6 +55,7 @@ impl LogForwarder {
             intake_sock: intake_sock,
             output_sock: output_sock,
             config: config,
+            log_file: File::create(path).expect("Unable to create LogForwarder log file"),
         })
     }
 
@@ -77,6 +86,8 @@ impl LogForwarder {
                 panic!("Routing logs to more than one Job Server is not yet implemented");
             }
         }
+        writeln!(&self.log_file, "Startup complete")?;
+
         self.intake_sock.bind(INPROC_ADDR)?;
 
         // Signal back to the spawning process that we're good
@@ -86,10 +97,22 @@ impl LogForwarder {
         // connections to establish
         thread::sleep(Duration::from_millis(100));
 
+        writeln!(&self.log_file, "Starting proxy between log_pipe and jobsrv")?;
+
         // Basically just need to pass things through... proxy time!
         // If we ever have multiple JobServers these need to be sent
         // to, then we might need some additional logic.
-        zmq::proxy(&mut self.intake_sock, &mut self.output_sock)?;
+        if let Err(e) = zmq::proxy(&mut self.intake_sock, &mut self.output_sock) {
+            writeln!(&self.log_file, "ZMQ proxy returned an error: {:?}", e)?;
+            return Err(Error::Zmq(e));
+        }
+
         Ok(())
+    }
+}
+
+impl Drop for LogForwarder {
+    fn drop(&mut self) {
+        self.log_file.sync_all().expect("Unable to sync log file");
     }
 }
