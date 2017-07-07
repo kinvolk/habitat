@@ -103,6 +103,7 @@ fn start(ui: &mut UI) -> Result<()> {
                         ("export", Some(sc)) => try!(sub_origin_key_export(sc)),
                         ("generate", Some(sc)) => try!(sub_origin_key_generate(ui, sc)),
                         ("import", Some(_)) => try!(sub_origin_key_import(ui)),
+                        ("list", Some(_)) => try!(sub_origin_key_list()),
                         ("upload", Some(sc)) => try!(sub_origin_key_upload(ui, sc)),
                         _ => unreachable!(),
                     }
@@ -236,6 +237,10 @@ fn sub_origin_key_import(ui: &mut UI) -> Result<()> {
     init();
 
     command::origin::key::import::start(ui, &content, &default_cache_key_path(Some(&*FS_ROOT)))
+}
+
+fn sub_origin_key_list() -> Result<()> {
+    command::origin::key::list::start(&default_cache_key_path(Some(&*FS_ROOT)))
 }
 
 fn sub_origin_key_upload(ui: &mut UI, m: &ArgMatches) -> Result<()> {

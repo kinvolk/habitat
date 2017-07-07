@@ -23,6 +23,7 @@ use depot_client;
 use common;
 use hcore;
 use handlebars;
+use glob;
 use toml;
 
 pub type Result<T> = result::Result<T, Error>;
@@ -43,12 +44,14 @@ pub enum Error {
     ExecCommandNotFound(String),
     FFINulError(ffi::NulError),
     FileNotFound(String),
+    GlobError(glob::GlobError),
     HabitatCommon(common::Error),
     HabitatCore(hcore::Error),
     HandlebarsRenderError(handlebars::TemplateRenderError),
     IO(io::Error),
     PackageArchiveMalformed(String),
     PathPrefixError(path::StripPrefixError),
+    PatternError(glob::PatternError),
     ProvidesError(String),
     RootRequired,
     SubcommandNotSupported(String),
@@ -115,6 +118,7 @@ impl fmt::Display for Error {
             }
             Error::FFINulError(ref e) => format!("{}", e),
             Error::FileNotFound(ref e) => format!("File not found at: {}", e),
+            Error::GlobError(ref e) => format!("Could not read contents of file: {}", e),
             Error::HabitatCommon(ref e) => format!("{}", e),
             Error::HabitatCore(ref e) => format!("{}", e),
             Error::HandlebarsRenderError(ref e) => format!("{}", e),
@@ -126,6 +130,7 @@ impl fmt::Display for Error {
                 )
             }
             Error::PathPrefixError(ref err) => format!("{}", err),
+            Error::PatternError(ref e) => format!("Could not parse pattern: {}", e),
             Error::ProvidesError(ref err) => format!("Can't find {}", err),
             Error::RootRequired => {
                 "Root or administrator permissions required to complete operation".to_string()
@@ -162,6 +167,7 @@ impl error::Error for Error {
             Error::ExecCommandNotFound(_) => "Exec command was not found on filesystem or in PATH",
             Error::FFINulError(ref err) => err.description(),
             Error::FileNotFound(_) => "File not found",
+            Error::GlobError(ref err) => err.description(),
             Error::HabitatCommon(ref err) => err.description(),
             Error::HabitatCore(ref err) => err.description(),
             Error::HandlebarsRenderError(ref err) => err.description(),
@@ -170,6 +176,7 @@ impl error::Error for Error {
                 "Package archive was unreadable or had unexpected contents"
             }
             Error::PathPrefixError(ref err) => err.description(),
+            Error::PatternError(ref err) => err.description(),
             Error::ProvidesError(_) => {
                 "Can't find a package that provides the given search parameter"
             }
@@ -218,6 +225,18 @@ impl From<handlebars::TemplateRenderError> for Error {
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IO(err)
+    }
+}
+
+impl From<glob::GlobError> for Error {
+    fn from(err: glob::GlobError) -> Error {
+        Error::GlobError(err)
+    }
+}
+
+impl From<glob::PatternError> for Error {
+    fn from(err: glob::PatternError) -> Error {
+        Error::PatternError(err)
     }
 }
 
