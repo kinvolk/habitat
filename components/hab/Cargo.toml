@@ -12,6 +12,7 @@ doc = false
 [dependencies]
 ansi_term = "*"
 env_logger = "*"
+glob = "*"
 hyper = "*"
 handlebars = { version = "*", features = ["partial4"], default-features = false }
 lazy_static = "*"
