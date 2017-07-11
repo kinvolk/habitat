@@ -1,11 +1,16 @@
+hab_binary_path="$HAB_ROOT_PATH/bin/hab"
+#if [ -n "$HAB_MOUNT_BIN" ]; then
+#    hab_binary_path="/custom_bin/hab"
+#fi
+
 studio_type="default"
 studio_path="$HAB_ROOT_PATH/bin"
 studio_enter_environment="STUDIO_ENTER=true"
-studio_enter_command="$HAB_ROOT_PATH/bin/hab pkg exec core/hab-backline bash --login +h"
+studio_enter_command="$hab_binary_path pkg exec core/hab-backline bash --login +h"
 studio_build_environment=
 studio_build_command="record \${1:-} $HAB_ROOT_PATH/bin/build"
 studio_run_environment=
-studio_run_command="$HAB_ROOT_PATH/bin/hab pkg exec core/hab-backline bash --login"
+studio_run_command="$hab_binary_path pkg exec core/hab-backline bash --login"
 
 pkgs="${HAB_BACKLINE_PKG:-core/hab-backline}"
 
@@ -80,7 +85,7 @@ finish_setup() {
   # `$PATH` is concerned.
   $bb cat <<EOF > $HAB_STUDIO_ROOT$HAB_ROOT_PATH/bin/build
 #!$bash_path/bin/sh
-exec $HAB_ROOT_PATH/bin/hab pkg exec core/hab-plan-build hab-plan-build \$*
+exec $hab_binary_path pkg exec core/hab-plan-build hab-plan-build \$*
 EOF
   $bb chmod $v 755 $HAB_STUDIO_ROOT$HAB_ROOT_PATH/bin/build
 
@@ -91,6 +96,9 @@ EOF
 # Add hab to the default PATH at the front so any wrapping scripts will
 # be found and called first
 export PATH=$HAB_ROOT_PATH/bin:\$PATH
+if [ -d $/custom_bin ]; then
+  export PATH=/custom_bin:\$PATH
+fi
 
 # Colorize grep/egrep/fgrep by default
 alias grep='grep --color=auto'

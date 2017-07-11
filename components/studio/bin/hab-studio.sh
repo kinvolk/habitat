@@ -102,6 +102,8 @@ ENVIRONMENT VARIABLES:
     http_proxy          Sets an http_proxy environment variable inside the Studio
     https_proxy         Sets an https_proxy environment variable inside the Studio
     no_proxy            Sets a no_proxy environment variable inside the Studio
+    HAB_MOUNT_BIN       Sets the additional directory with binaries to be mounted
+                        and added to PATH
 
 SUBCOMMAND HELP:
     $program <SUBCOMMAND> -h
@@ -493,8 +495,12 @@ new_studio() {
   # If the system is 64-bit, a few symlinks will be required
   case $($bb uname -m) in
   x86_64)
-    $bb ln -sf $v lib $HAB_STUDIO_ROOT/lib64
-    $bb ln -sf $v lib $HAB_STUDIO_ROOT/usr/lib64
+    if [ ! -e $HAB_STUDIO_ROOT/lib64 ]; then
+      $bb ln -sf $v lib $HAB_STUDIO_ROOT/lib64
+    fi
+    if [ ! -e $HAB_STUDIO_ROOT/usr/lib64 ]; then
+      $bb ln -sf $v lib $HAB_STUDIO_ROOT/usr/lib64
+    fi
     ;;
   esac
 
@@ -674,6 +680,34 @@ PROFILE
         $bb mount $v --bind $SRC_PATH $HAB_STUDIO_ROOT/src
       fi
     fi
+    if [ -z "${NO_MOUNT}" -a -n "${HAB_MOUNT_BIN}" ]; then
+      $bb mkdir -p $v $HAB_STUDIO_ROOT/custom_bin
+      if ! $bb mount | $bb grep -q "on $HAB_STUDIO_ROOT/custom_bin type"; then
+        $bb mount $v --bind $HAB_MOUNT_BIN $HAB_STUDIO_ROOT/custom_bin
+      fi
+      if [ ! -h $HAB_STUDIO_ROOT/lib ]; then
+        $bb mv $HAB_STUDIO_ROOT/lib $HAB_STUDIO_ROOT/lib.old
+        $bb ln -sf usr/lib $HAB_STUDIO_ROOT/lib
+      fi
+      if [ ! -h $HAB_STUDIO_ROOT/lib64 ]; then
+        mv $HAB_STUDIO_ROOT/lib64 $HAB_STUDIO_ROOT/lib64.old
+        $bb ln -sf usr/lib64 $HAB_STUDIO_ROOT/lib64
+      elif [ `$bb readlink $HAB_STUDIO_ROOT/lib64` = 'lib' ]; then
+        $bb rm $HAB_STUDIO_ROOT/lib64
+        $bb ln -sf usr/lib64 $HAB_STUDIO_ROOT/lib64
+      fi
+      if [ -h $HAB_STUDIO_ROOT/usr/lib64 ]; then
+          $bb mv $HAB_STUDIO_ROOT/usr/lib64 $HAB_STUDIO_ROOT/usr/lib64.old
+          $bb mkdir -p $HAB_STUDIO_ROOT/usr/lib64
+      fi
+      # Also mount libdirs
+      if ! $bb mount | $bb grep -q "on $HAB_STUDIO_ROOT/usr/lib type"; then
+        $bb mount $v --bind /usr/lib $HAB_STUDIO_ROOT/usr/lib
+      fi
+      if ! $bb mount | $bb grep -q "on $HAB_STUDIO_ROOT/usr/lib64 type"; then
+        $bb mount $v --bind /usr/lib64 $HAB_STUDIO_ROOT/usr/lib64
+      fi
+    fi
   fi
 }
 
@@ -805,7 +839,7 @@ rm_studio() {
   cleanup_studio
 
   # Remove remaining filesystem
-  $bb rm -rf $v $HAB_STUDIO_ROOT
+  #$bb rm -rf $v $HAB_STUDIO_ROOT
 }
 
 
@@ -902,7 +936,12 @@ chroot_env() {
 
   # Set the environment which will be passed to `env(1)` to initialize the
   # session.
-  env="LC_ALL=POSIX HOME=/root TERM=${TERM:-} PATH=$studio_path"
+  env="LC_ALL=POSIX HOME=/root TERM=${TERM:-}"
+  if [ -n "${HAB_MOUNT_BIN}" ]; then
+      env="$env PATH=/custom_bin:$studio_path"
+  else
+      env="$env PATH=$studio_path"
+  fi
   # Add `STUDIO_TYPE` to the environment
   env="$env STUDIO_TYPE=$STUDIO_TYPE"
   # Add any additional environment variables from the Studio config, based on
@@ -1059,6 +1098,18 @@ unmount_filesystems() {
   # Unmount file systems that were previously set up in, but only if they are
   # currently mounted. You know, so you can run this all day long, like, for
   # fun and stuff.
+
+  if $bb mount | $bb grep -q "on $HAB_STUDIO_ROOT/usr/lib64"; then
+    $bb umount $v -l $HAB_STUDIO_ROOT/usr/lib64
+  fi
+
+  if $bb mount | $bb grep -q "on $HAB_STUDIO_ROOT/usr/lib"; then
+    $bb umount $v -l $HAB_STUDIO_ROOT/usr/lib
+  fi
+
+  if $bb mount | $bb grep -q "on $HAB_STUDIO_ROOT/custom_bin"; then
+    $bb umount $v -l $HAB_STUDIO_ROOT/custom_bin
+  fi
 
   if $bb mount | $bb grep -q "on $HAB_STUDIO_ROOT/src type"; then
     $bb umount $v -l $HAB_STUDIO_ROOT/src
@@ -1224,6 +1275,8 @@ shift "$((OPTIND - 1))"
 # Now we can set up some common runtime variables that are used throughout the
 # program
 
+# The path to the additional bin directory
+: ${HAB_MOUNT_BIN:=}
 # The source path to be mounted into the Studio, which defaults to current
 # working directory
 : ${SRC_PATH:=$($bb pwd)}
@@ -1275,6 +1328,7 @@ studio_config="$HAB_STUDIO_ROOT/.studio"
 # Whether or not less output has been requested. An unset or empty value means
 # it is set to false and any other value is considered set or true.
 : ${QUIET:=}
+#
 
 export VERBOSE QUIET
 
