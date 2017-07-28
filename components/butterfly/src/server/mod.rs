@@ -91,6 +91,7 @@ pub struct Server {
     swim_rounds: Arc<AtomicIsize>,
     gossip_rounds: Arc<AtomicIsize>,
     blacklist: Arc<RwLock<HashSet<String>>>,
+    peer_seed: Arc<RwLock<Vec<Member>>>,
 }
 
 impl Clone for Server {
@@ -120,6 +121,7 @@ impl Clone for Server {
             gossip_rounds: self.gossip_rounds.clone(),
             blacklist: self.blacklist.clone(),
             socket: None,
+            peer_seed: Arc::clone(&self.peer_seed),
         }
     }
 }
@@ -174,6 +176,7 @@ impl Server {
                     gossip_rounds: Arc::new(AtomicIsize::new(0)),
                     blacklist: Arc::new(RwLock::new(HashSet::new())),
                     socket: None,
+                    peer_seed: Arc::new(RwLock::new(Vec::new())),
                 })
             }
             (Err(e), _) | (_, Err(e)) => Err(Error::CannotBind(e)),
@@ -343,6 +346,24 @@ impl Server {
                 });
         }
 
+        Ok(())
+    }
+
+    pub fn need_peer_seeding(&self) -> bool {
+        if self.member_list.len_initial_members() == 0 {
+            let m = self.member_list.members.read().expect(
+                "Members lock is poisoned",
+            );
+            m.is_empty()
+        } else {
+            false
+        }
+    }
+
+    pub fn set_peer_seed(&mut self, mut members: Vec<Member>) -> Result<()> {
+        let mut peer_seed = self.peer_seed.write().expect("Peer seed lock is poisoned");
+        peer_seed.clear();
+        peer_seed.append(&mut members);
         Ok(())
     }
 
