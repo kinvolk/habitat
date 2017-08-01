@@ -35,6 +35,7 @@ The meanings of the keys are as follows:
 | PH | Package hooks |
 | PK | Package |
 | PT | Path |
+| PW | Peer file watcher |
 | SC | Service configuration |
 | SH | Starting a shell with `hab sup sh` |
 | SI | Unix signals |

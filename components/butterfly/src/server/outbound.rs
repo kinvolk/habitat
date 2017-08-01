@@ -84,22 +84,41 @@ impl Outbound {
         let mut have_members = false;
         let num_initial = self.server.member_list.len_initial_members();
         loop {
-            if !have_members && num_initial != 0 {
-                // The minimum that's strictly more than half
-                let min_to_start = num_initial / 2 + 1;
+            if !have_members {
+                if num_initial != 0 {
+                    // The minimum that's strictly more than half
+                    let min_to_start = num_initial / 2 + 1;
 
-                if self.server.member_list.len() >= min_to_start {
-                    have_members = true;
+                    if self.server.member_list.len() >= min_to_start {
+                        have_members = true;
+                    } else {
+                        self.server.member_list.with_initial_members(|member| {
+                            ping(
+                                &self.server,
+                                &self.socket,
+                                &member,
+                                member.swim_socket_address(),
+                                None,
+                            );
+                        });
+                    }
                 } else {
-                    self.server.member_list.with_initial_members(|member| {
-                        ping(
-                            &self.server,
-                            &self.socket,
-                            &member,
-                            member.swim_socket_address(),
-                            None,
-                        );
-                    });
+                    if self.server.member_list.len() > 0 {
+                        have_members = true;
+                    } else {
+                        for member in self.server.peer_seed
+                            .read()
+                            .expect("Peer seed lock is poisoned")
+                            .iter() {
+                            ping(
+                                &self.server,
+                                &self.socket,
+                                member,
+                                member.swim_socket_address(),
+                                None,
+                            );
+                        }
+                    }
                 }
             }
 
