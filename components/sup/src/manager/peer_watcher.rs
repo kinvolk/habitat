@@ -127,6 +127,7 @@ impl PeerWatcher {
         W: Watcher,
     {
         while let Ok(event) = watcher_data.rx.recv() {
+            /*
             let our_event = match event {
                 DebouncedEvent::NoticeWrite(ref p) |
                 DebouncedEvent::NoticeRemove(ref p) |
@@ -149,6 +150,8 @@ impl PeerWatcher {
             if our_event {
                 have_events.store(true, Ordering::Relaxed);
             }
+            */
+            have_events.store(true, Ordering::Relaxed);
         }
         outputln!(
             "PeerWatcher({}) fs watching died, restarting",
