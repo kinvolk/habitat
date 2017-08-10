@@ -12,34 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, channel};
 use std::thread::Builder as ThreadBuilder;
-use std::time::Duration;
 
 use butterfly::member::Member;
 use config::GOSSIP_DEFAULT_PORT;
-use error::{Error, Result};
-use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
+use error::{Error, Result, SupError};
+use manager::file_watcher::{Callbacks, FileWatcher};
 
-const WATCHER_DELAY_MS: u64 = 2_000;
 static LOGKEY: &'static str = "PW";
+
+pub struct PeerCallbacks {
+    have_events: Arc<AtomicBool>,
+}
+
+impl Callbacks for PeerCallbacks {
+    fn listening_for_events(&mut self) {
+
+    }
+
+    fn stopped_listening(&mut self) {
+
+    }
+
+    fn file_appeared(&mut self) {
+        self.have_events.store(true, Ordering::Relaxed);
+    }
+
+    fn file_modified(&mut self) {
+        self.have_events.store(true, Ordering::Relaxed)
+    }
+
+    fn file_disappeared(&mut self) {
+        self.have_events.store(true, Ordering::Relaxed)
+    }
+
+    fn error(&mut self, _: &SupError) -> bool {
+        true
+    }
+}
 
 pub struct PeerWatcher {
     path: PathBuf,
     have_events: Arc<AtomicBool>,
-}
-
-struct WatcherData<W: Watcher> {
-    watcher: W,
-    rx: Receiver<DebouncedEvent>,
-    abs_path: PathBuf,
 }
 
 impl PeerWatcher {
@@ -47,16 +67,8 @@ impl PeerWatcher {
     where
         P: Into<PathBuf>,
     {
-        Self::run_with::<RecommendedWatcher, P>(path)
-    }
-
-    fn run_with<W, P>(path: P) -> Result<Self>
-    where
-        P: Into<PathBuf>,
-        W: Watcher,
-    {
         let path = path.into();
-        let have_events = Self::setup_watcher::<W>(path.clone())?;
+        let have_events = Self::setup_watcher(path.clone())?;
 
         Ok(PeerWatcher {
             path: path,
@@ -64,125 +76,34 @@ impl PeerWatcher {
         })
     }
 
-    fn setup_watcher<W>(path: PathBuf) -> Result<Arc<AtomicBool>>
-    where
-        W: Watcher,
-    {
-        let (abs_path, dir_path) = Self::watcher_paths(path)?;
-        let have_events = Arc::new(AtomicBool::new(abs_path.is_file()));
+    fn setup_watcher(path: PathBuf) -> Result<Arc<AtomicBool>> {
+        let have_events = Arc::new(AtomicBool::new(false));
         let have_events_for_thread = Arc::clone(&have_events);
         ThreadBuilder::new()
-            .name(format!("peer-watcher-{}", abs_path.display()))
+            .name(format!("peer-watcher-[{}]", path.display()))
             .spawn(move || {
-                debug!("PeerWatcher({}) thread starting", abs_path.display());
+                //debug!("PeerWatcher({}) thread starting", abs_path.display());
                 loop {
-                    let watcher_data = match Self::create_watcher::<W>(&abs_path, &dir_path) {
-                        Some(wd) => wd,
-                        None => return,
+                    let have_events_for_loop = Arc::clone(&have_events_for_thread);
+                    let callbacks = PeerCallbacks {
+                        have_events: have_events_for_loop,
                     };
-                    Self::watcher_event_loop(watcher_data, &have_events_for_thread);
+                    let mut file_watcher = match FileWatcher::new(path.clone(), callbacks) {
+                        Ok(w) => w,
+                        Err(err) => {
+                            outputln!(
+                                "PeerWatcher({}) could create file watcher, ending thread ({})",
+                                path.display(),
+                                err
+                            );
+                            break;
+                        }
+                    };
+                    // TODO: Handle error.
+                    file_watcher.run();
                 }
             })?;
         Ok(have_events)
-    }
-
-    fn create_watcher<W>(abs_path: &PathBuf, dir_path: &PathBuf) -> Option<(WatcherData<W>)>
-    where
-        W: Watcher,
-    {
-        let (tx, rx) = channel();
-        let mut watcher_data = match W::new(tx, Duration::from_millis(WATCHER_DELAY_MS)) {
-            Ok(w) => WatcherData::<W> {
-                watcher: w,
-                rx: rx,
-                abs_path: abs_path.clone(),
-            },
-            Err(err) => {
-                outputln!(
-                    "PeerWatcher({}) could not start notifier, ending thread ({})",
-                    abs_path.display(),
-                    err
-                );
-                return None;
-            }
-        };
-        match watcher_data.watcher.watch(
-            &dir_path,
-            RecursiveMode::NonRecursive,
-        ) {
-            Ok(_) => Some(watcher_data),
-            Err(err) => {
-                outputln!(
-                    "PeerWatcher({}) could not start fs watching, ending thread ({})",
-                    watcher_data.abs_path.display(),
-                    err
-                );
-                None
-            }
-        }
-    }
-
-    fn watcher_event_loop<W>(watcher_data: WatcherData<W>, have_events: &Arc<AtomicBool>)
-    where
-        W: Watcher,
-    {
-        while let Ok(event) = watcher_data.rx.recv() {
-            /*
-            let our_event = match event {
-                DebouncedEvent::NoticeWrite(ref p) |
-                DebouncedEvent::NoticeRemove(ref p) |
-                DebouncedEvent::Create(ref p) |
-                DebouncedEvent::Write(ref p) |
-                DebouncedEvent::Chmod(ref p) |
-                DebouncedEvent::Remove(ref p) => *p == watcher_data.abs_path,
-                DebouncedEvent::Rename(ref p1, ref p2) => {
-                    (*p1 == watcher_data.abs_path) || (*p2 == watcher_data.abs_path)
-                }
-                DebouncedEvent::Rescan => false,
-                DebouncedEvent::Error(_, _) => false,
-            };
-            outputln!(
-                "PeerWatcher({}) file system event: {:?}, ignored: {}",
-                watcher_data.abs_path.display(),
-                event,
-                !our_event
-            );
-            if our_event {
-                have_events.store(true, Ordering::Relaxed);
-            }
-            */
-            have_events.store(true, Ordering::Relaxed);
-        }
-        outputln!(
-            "PeerWatcher({}) fs watching died, restarting",
-            watcher_data.abs_path.display()
-        );
-    }
-
-    fn watcher_paths(p: PathBuf) -> Result<(PathBuf, PathBuf)> {
-        let abs_path = if p.is_absolute() {
-            p.clone()
-        } else {
-            let cwd = env::current_dir().map_err(|e| sup_error!(Error::Io(e)))?;
-            cwd.join(p)
-        };
-        let parent = match abs_path.parent() {
-            Some(p) => {
-                if !p.is_dir() {
-                    return Err(sup_error!(
-                        Error::PeerWatcherDirNotFound(p.display().to_string())
-                    ));
-                }
-                p.to_owned()
-            }
-            None => return Err(sup_error!(Error::PeerWatcherFileIsRoot)),
-        };
-        match abs_path.file_name() {
-            Some(_) => Ok((abs_path, parent)),
-            None => Err(sup_error!(
-                Error::PeerWatcherDirNotFound(parent.display().to_string())
-            )),
-        }
     }
 
     pub fn has_fs_events(&self) -> bool {

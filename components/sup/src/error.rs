@@ -117,6 +117,7 @@ pub enum Error {
     EnvJoinPathsError(env::JoinPathsError),
     ExecCommandNotFound(String),
     FileNotFound(String),
+    FileWatcherFileIsRoot,
     HabitatCommon(common::Error),
     HabitatCore(hcore::Error),
     TemplateFileError(handlebars::TemplateFileError),
@@ -135,10 +136,9 @@ pub enum Error {
     NameLookup(io::Error),
     NetParseError(net::AddrParseError),
     NoLauncher,
+    NotifyError(notify::Error),
     NulError(ffi::NulError),
     PackageNotFound(package::PackageIdent),
-    PeerWatcherDirNotFound(String),
-    PeerWatcherFileIsRoot,
     Permissions(String),
     PidFileCorrupt(PathBuf),
     PidFileIO(PathBuf, io::Error),
@@ -156,7 +156,6 @@ pub enum Error {
     SignalFailed,
     SpecWatcherDirNotFound(String),
     SpecWatcherGlob(glob::PatternError),
-    SpecWatcherNotify(notify::Error),
     StrFromUtf8Error(str::Utf8Error),
     StringFromUtf8Error(string::FromUtf8Error),
     TomlEncode(toml::ser::Error),
@@ -218,6 +217,7 @@ impl fmt::Display for SupError {
             Error::DepotClient(ref err) => format!("{}", err),
             Error::EnvJoinPathsError(ref err) => format!("{}", err),
             Error::FileNotFound(ref e) => format!("File not found at: {}", e),
+            Error::FileWatcherFileIsRoot => format!("Watched file is root"),
             Error::InvalidBinding(ref binding) => {
                 format!(
                     "Invalid binding \"{}\", must be of the form <NAME>:<SERVICE_GROUP> where \
@@ -244,6 +244,7 @@ impl fmt::Display for SupError {
             Error::NameLookup(ref e) => format!("Error resolving a name or IP address: {}", e),
             Error::NetParseError(ref e) => format!("Can't parse ip:port: {}", e),
             Error::NoLauncher => format!("Supervisor must be run from `hab-launch`"),
+            Error::NotifyError(ref e) => format!("Notify error: {}", e),
             Error::NulError(ref e) => format!("{}", e),
             Error::PackageNotFound(ref pkg) => {
                 if pkg.fully_qualified() {
@@ -252,13 +253,6 @@ impl fmt::Display for SupError {
                     format!("Cannot find a release of package: {}", pkg)
                 }
             }
-            Error::PeerWatcherDirNotFound(ref path) => {
-                format!(
-                    "Directory '{}' containing peer watch file not created or is not a directory",
-                    path
-                )
-            }
-            Error::PeerWatcherFileIsRoot => format!("Peer watch file is root"),
             Error::PidFileCorrupt(ref path) => {
                 format!("Unable to decode contents of PID file, {}", path.display())
             }
@@ -317,7 +311,6 @@ impl fmt::Display for SupError {
                 )
             }
             Error::SpecWatcherGlob(ref e) => format!("{}", e),
-            Error::SpecWatcherNotify(ref e) => format!("{}", e),
             Error::StrFromUtf8Error(ref e) => format!("{}", e),
             Error::StringFromUtf8Error(ref e) => format!("{}", e),
             Error::TomlEncode(ref e) => format!("Failed to encode TOML: {}", e),
@@ -362,6 +355,7 @@ impl error::Error for SupError {
             Error::DepotClient(ref err) => err.description(),
             Error::EnvJoinPathsError(ref err) => err.description(),
             Error::FileNotFound(_) => "File not found",
+            Error::FileWatcherFileIsRoot => "Watched file is root",
             Error::InvalidBinding(_) => "Invalid binding parameter",
             Error::InvalidBinds(_) => {
                 "Service binds detected that are neither required nor optional package binds"
@@ -382,12 +376,11 @@ impl error::Error for SupError {
             Error::NetParseError(_) => "Can't parse IP:port",
             Error::NameLookup(_) => "Error resolving a name or IP address",
             Error::NoLauncher => "Supervisor must be run from `hab-launch`",
+            Error::NotifyError(_) => "Notify error",
             Error::NulError(_) => {
                 "An attempt was made to build a CString with a null byte inside it"
             }
             Error::PackageNotFound(_) => "Cannot find a package",
-            Error::PeerWatcherDirNotFound(_) => "Directory containing peer watch file not created or is not a directory",
-            Error::PeerWatcherFileIsRoot => "Peer watch file is root",
             Error::Permissions(_) => "File system permissions error",
             Error::PidFileCorrupt(_) => "Unable to decode contents of PID file",
             Error::PidFileIO(_, _) => "Unable to read or write to PID file",
@@ -407,7 +400,6 @@ impl error::Error for SupError {
             Error::SignalFailed => "Failed to send a signal to the child process",
             Error::SpecWatcherDirNotFound(_) => "Spec directory not created or is not a directory",
             Error::SpecWatcherGlob(_) => "Spec watcher file globbing error",
-            Error::SpecWatcherNotify(_) => "Spec watcher error",
             Error::StrFromUtf8Error(_) => "Failed to convert a str from a &[u8] as UTF-8",
             Error::StringFromUtf8Error(_) => "Failed to convert a string from a Vec<u8> as UTF-8",
             Error::TomlEncode(_) => "Failed to encode toml!",
@@ -511,7 +503,7 @@ impl From<mpsc::TryRecvError> for SupError {
 
 impl From<notify::Error> for SupError {
     fn from(err: notify::Error) -> SupError {
-        sup_error!(Error::SpecWatcherNotify(err))
+        sup_error!(Error::NotifyError(err))
     }
 }
 
