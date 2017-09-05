@@ -1033,13 +1033,20 @@ impl<C: Callbacks> FileWatcher<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::{DirBuilder, File, OpenOptions};
+    use std::collections::HashMap;
+    use std::fs::{self, DirBuilder, File, OpenOptions};
+    use std::os::unix::fs as unix_fs;
     use tempdir::TempDir;
-    use super::PeerWatcher;
+    use super::super::PeerWatcher;
+    use super::{Common, DirFileName, WatchedFile};
     use butterfly::member::Member;
     use config::GOSSIP_DEFAULT_PORT;
-    use std::io::Write;
+    use std::io::prelude::*;
+    use std::io::BufReader;
+    use std::path::{Component, PathBuf};
     use error::Error;
+    use regex::{Captures, Regex};
+    use std::ffi::OsString;
 
     enum InitCommand {
         MakeDir(PathBuf),
@@ -1075,58 +1082,58 @@ mod tests {
     }
 
     impl TestCase {
-        fn run(&self, root: PathBuf) {
+        fn run(&self, root: &PathBuf) {
             for cmd in self.init_commands {
                 match cmd {
-                    MakeDir(p) => {
-                        create_dir_all(prepend_root(root, p)).unwrap();
+                    InitCommand::MakeDir(p) => {
+                        fs::create_dir_all(prepend_root(root, &p)).unwrap();
                     }
-                    Touch(p) => {
-                        File::create(prepend_root(root, p)).unwrap();
+                    InitCommand::Touch(p) => {
+                        File::create(prepend_root(root, &p)).unwrap();
                     }
-                    Link(t, p) => {
-                        let pp = prepend_root(root, p);
+                    InitCommand::Link(t, p) => {
+                        let pp = prepend_root(root, &p);
                         let tt = if t.is_absolute() {
-                            prepend_root(root, t)
+                            prepend_root(root, &t)
                         } else {
                             t
                         };
-                        std::os::unix::fs::symlink(tt, pp).unwrap()
+                        unix_fs::symlink(tt, pp).unwrap()
                     }
                 }
             }
             // TODO: setup file watcher
             for check in self.checks {
                 match check.action {
-                    CreateSymlink(p, t) => {
-                        let pp = prepend_root(root, p);
+                    CheckAction::CreateSymlink(p, t) => {
+                        let pp = prepend_root(root, &p);
                         let tt = if t.is_absolute() {
-                            prepend_root(root, t)
+                            prepend_root(root, &t)
                         } else {
                             t
                         };
-                        std::os::unix::fs::symlink(tt, pp).unwrap()
+                        unix_fs::symlink(tt, pp).unwrap()
                     }
-                    CreateDirectory(p) => {
-                        create_dir_all(prepend_root(root, p)).unwrap();
+                    CheckAction::CreateDirectory(p) => {
+                        fs::create_dir_all(prepend_root(root, &p)).unwrap();
                     }
-                    CreateFile(p) => {
-                        File::create(prepend_root(root, p)).unwrap();
+                    CheckAction::CreateFile(p) => {
+                        File::create(prepend_root(root, &p)).unwrap();
                     }
-                    Move(f, t) => {
-                        rename(prepend_root(root, f), prepend_root(root, t)).unwrap();
+                    CheckAction::Move(f, t) => {
+                        fs::rename(prepend_root(root, &f), prepend_root(root, &t)).unwrap();
                     }
-                    Remove(p) => {
-                        let pp = prepend_root(root, p);
+                    CheckAction::Remove(p) => {
+                        let pp = prepend_root(root, &p);
                         let m = pp.symlink_metadata().unwrap();
-                        let t = metadata.file_type();
+                        let t = m.file_type();
                         if t.is_dir() {
-                            remove_dir_all(pp).unwrap();
+                            fs::remove_dir_all(pp).unwrap();
                         } else {
-                            remove_file(pp).unwrap();
+                            fs::remove_file(pp).unwrap();
                         }
                     }
-                    Nop => (),
+                    CheckAction::Nop => (),
                 }
                 // TODO: compare paths and dirs
             }
@@ -1148,7 +1155,7 @@ mod tests {
     struct TestParser {
         stage: Stage,
         path: PathBuf,
-        reader: BufReader,
+        reader: BufReader<File>,
 
         initRe: Regex,
         initTouchRe: Regex,
@@ -1170,7 +1177,7 @@ mod tests {
     }
 
     fn replace_PATH(s: &str) -> String {
-        s.replace("PATH", r"[a-zA-Z0-9/._-]+");
+        s.replace("PATH", r"[a-zA-Z0-9/._-]+")
     }
 
     fn re(s: &str) -> Regex {
@@ -1178,25 +1185,25 @@ mod tests {
         raw.push_str(replace_PATH(s).as_str());
         raw.push_str(r"\s+$");
 
-        Regex::new(raw).unwrap()
+        Regex::new(&raw).unwrap()
     }
 
     fn rePart(s: &str) -> Regex {
         let raw = replace_PATH(s);
 
-        Regex::new(raw).unwrap()
+        Regex::new(&raw).unwrap()
     }
 
-    fn cap(re: &Regex, line: &String) -> Option<_> {
+    fn cap<'a>(re: &'a Regex, line: &'a String) -> Option<Captures<'a>> {
         re.captures(line.as_str())
     }
 
-    fn cap_must(re: &Regex, line: &String) -> Captures {
+    fn cap_must<'a>(re: &'a Regex, line: &'a String) -> Captures<'a> {
         cap(re, line).unwrap()
     }
 
     fn cap_get(caps: &Captures, i: usize) -> Option<String> {
-        caps.get(i).map(|m| m.to_str().to_owned())
+        caps.get(i).map(|m| m.as_str().to_owned())
     }
 
     fn cap_get_must(caps: &Captures, i: usize) -> String {
@@ -1228,16 +1235,19 @@ mod tests {
             }
         }
 
-        fn parse(&mut self) -> Result<Vec<TestCase>> {
+        fn parse(&mut self) -> Result<Vec<TestCase>,()> {
             self.setup_reader()?;
             let mut tests = Vec::new();
             let mut test_case = TestCase::default();
             let mut current_check = None;
-            for line in reader.lines() {
-                let empty = line == "";
+            for line in self.reader.lines() {
+                let line = line.unwrap();
+
                 if let Some(idx) = line.find("//") {
                     line.split_off(idx);
                 }
+
+                let empty = line == "";
                 if !empty && line.trim().is_empty() {
                     continue
                 }
@@ -1251,9 +1261,10 @@ mod tests {
                         if empty {
                             continue;
                         }
-                        let caps = self.initRe.captures(line).unwrap();
+
+                        let caps = self.initRe.captures(line.as_str()).unwrap();
                         test_case.path = if let Some(path) = caps.get(1) {
-                            PathBuf::from(path)
+                            PathBuf::from(path.as_str())
                         } else {
                             PathBuf::from("/a/b/c/d/e/f")
                         };
@@ -1267,23 +1278,23 @@ mod tests {
                             self.stage = Stage::CheckAction;
                             continue;
                         }
-                        let cmd = if let Some(caps) = cap(self.initTouchRe, line) {
-                            let path = PathBuf::from(cap_get_must(caps, 1));
+                        let cmd = if let Some(caps) = cap(&self.initTouchRe, &line) {
+                            let path = PathBuf::from(cap_get_must(&caps, 1));
                             if !path.is_absolute() {
                                 panic!("touch path must be absolute");
                             }
                             InitCommand::Touch(path)
                         }
-                        else if let Some(caps) = cap(self.initMkDirRe, line) {
-                            let path = PathBuf::from(cap_get_must(caps, 1));
+                        else if let Some(caps) = cap(&self.initMkDirRe, &line) {
+                            let path = PathBuf::from(cap_get_must(&caps, 1));
                             if !path.is_absolute() {
                                 panic!("mkdir path must be absolute");
                             }
                             InitCommand::MakeDir(path)
                         } else {
-                            let caps = cap_must(self.initLnRe, line);
-                            let target = PathBuf::from(cap_get_must(caps, 1));
-                            let path = PathBuf::from(cap_get_must(caps, 2));
+                            let caps = cap_must(&self.initLnRe, &line);
+                            let target = PathBuf::from(cap_get_must(&caps, 1));
+                            let path = PathBuf::from(cap_get_must(&caps, 2));
                             if !path.is_absolute() {
                                 panic!("ln path must be absolute");
                             }
@@ -1308,30 +1319,30 @@ mod tests {
                             if test_case.checks.is_empty() {
                                 panic!("test case with no checks")
                             }
-                            test_cases.push(test_case);
+                            test_case.push(test_case);
                             test_case = TestCase::Default();
                             self.stage = Stage::TestInitLine;
                             continue;
                         }
-                        let action = if let Some(caps) = cap(self.checkNopRe, line) {
+                        let action = if let Some(caps) = cap(&self.checkNopRe, &line) {
                             CheckAction::Nop
-                        } else if let Some(caps) = cap(self.checkRemoveRe, line) {
-                            let path = Self::get_expath(cap_get_must(line, 1));
+                        } else if let Some(caps) = cap(&self.checkRemoveRe, &line) {
+                            let path = Self::get_expath(&test_case, cap_get_must(&caps, 1));
                             CheckAction::Remove(path)
-                        } else if let Some(caps) = cap(self.checkMoveRe, line) {
-                            let from = Self::get_expath(cap_get_must(line, 1));
-                            let to = Self::get_expath(cap_get_must(line, 2));
+                        } else if let Some(caps) = cap(&self.checkMoveRe, &line) {
+                            let from = Self::get_expath(&test_case, cap_get_must(&caps, 1));
+                            let to = Self::get_expath(&test_case, cap_get_must(&caps, 2));
                             CheckAction::Move(from, to)
-                        } else if let Some(caps) = cap(self.checkCreateFileRe, line) {
-                            let path = Self::get_expath(cap_get_must(line, 1));
+                        } else if let Some(caps) = cap(&self.checkCreateFileRe, &line) {
+                            let path = Self::get_expath(&test_case, cap_get_must(&caps, 1));
                             CheckAction::CreateFile(path)
-                        } else if let Some(caps) = cap(self.checkCreateDirRe, line) {
-                            let path = Self::get_expath(cap_get_must(line, 1));
+                        } else if let Some(caps) = cap(&self.checkCreateDirRe, &line) {
+                            let path = Self::get_expath(&test_case, cap_get_must(&caps, 1));
                             CheckAction::CreateDirectory(path)
                         } else {
-                            let caps = cap_must(self.checkCreateSymlinkRe, line);
-                            let path = Self::get_expath(cap_get_must(line, 1));
-                            let target = PathBuf::from(cap_get_must(line, 2));
+                            let caps = cap_must(&self.checkCreateSymlinkRe, &line);
+                            let path = Self::get_expath(&test_case, cap_get_must(&caps, 1));
+                            let target = PathBuf::from(cap_get_must(&caps, 2));
                             CheckAction::CreateSymlink(path, target)
                         };
                         test_case.checks.push(Check {
@@ -1342,30 +1353,30 @@ mod tests {
                         self.stage = Stage::CheckDirFirst;
                     }
                     Stage::CheckDirFirst => {
-                        let caps = cap_must(self.checkDirFirstRe, line);
-                        self.stage = if self.check_dir(caps, &mut test_case) {
+                        let caps = cap_must(&self.checkDirFirstRe, &line);
+                        self.stage = if self.check_dir(&caps, &mut test_case) {
                             Stage::CheckDirFollowup
                         } else {
                             Stage::CheckPathFirst
                         };
                     }
                     Stage::CheckDirFollowup => {
-                        let caps = cap_must(self.checkDirFollowupRe, line);
-                        if !self.check_dir(caps, &mut test_case) {
+                        let caps = cap_must(&self.checkDirFollowupRe, &line);
+                        if !self.check_dir(&caps, &mut test_case) {
                             self.stage = Stage::CheckPathFirst;
                         }
                     }
                     Stage::CheckPathFirst => {
-                        let caps = cap_must(self.checkPathFirstRe, line);
-                        self.stage = if self.check_path(caps, &mut test_case) {
+                        let caps = cap_must(&self.checkPathFirstRe, &line);
+                        self.stage = if self.check_path(&caps, &mut test_case) {
                             Stage::CheckPathFollowup
                         } else {
                             Stage::CheckAction
                         }
                     }
                     Stage::CheckPathFollowup => {
-                        let caps = cap_must(self.checkPathFollowupRe, line);
-                        if !self.check_path(caps, &mut test_case) {
+                        let caps = cap_must(&self.checkPathFollowupRe, &line);
+                        if !self.check_path(&caps, &mut test_case) {
                             self.stage = Stage::CheckAction;
                         }
                     }
@@ -1374,31 +1385,37 @@ mod tests {
                     }
                 }
             };
+
             if self.stage != Stage::Outro {
                 panic!("premature end of file");
             }
-            test_cases
+
+            test_case
         }
 
-        fn setup_reader(&mut self) -> Result<()> {
+        fn setup_reader(&mut self) -> Result<(),()> {
             let file = File::open(&self.path).map_err(|err| {
                 return sup_error!(Error::Io(err));
             })?;
+
             self.reader = BufReader::new(file);
         }
 
         fn get_expath(test_case: &TestCase, s: String) -> PathBuf {
             let p = PathBuf::from(s);
+
             if p.iter().count() > 1 {
                 if !p.is_absolute() {
                     panic!("expath is not a single component and not an absolute path");
                 }
                 return p;
             }
+
             let os = p.into_os_string();
             p = PathBuf::new();
             let mut found = false;
             let mut i: usize = 0;
+
             for (idx, c) in test_case.path.components().enumerate() {
                 match c {
                     Component::Normal(raw) => {
@@ -1410,10 +1427,13 @@ mod tests {
                     _ => (),
                 }
             }
+
             if !found {
                 panic!("invalid expath, component not found in init path");
             }
-            p.extend(test_case.path.iter().take(idx + 1));
+
+            p.extend(test_case.path.iter().take(i + 1));
+
             p
         }
 
@@ -1440,11 +1460,11 @@ mod tests {
         }
 
         fn common_from_body(&self, body: String) -> Common {
-            let prev = Self::re_to_option(self.commonBodyPrev, &body);
-            let next = Self::re_to_option(self.commonBodyNext, &body);
+            let prev = Self::re_to_option(&self.commonBodyPrev, &body);
+            let next = Self::re_to_option(&self.commonBodyNext, &body);
 
-            let path_rest_caps = cap_must(self.commonBodyPathRest, &body);
-            let path_rest_raw = cap_get_must(path_rest_caps, 1);
+            let path_rest_caps = cap_must(&self.commonBodyPathRest, &body);
+            let path_rest_raw = cap_get_must(&path_rest_caps, 1);
             let path_rest = path_rest_raw.split(",").map(|s| {
                 let tmp = s.trim();
                 if tmp.is_empty() {
@@ -1463,8 +1483,8 @@ mod tests {
             }
         }
 
-        fn get_watched_path(file_type: String, common: Common) -> WatchedFile {
-            match (file_type) {
+        fn get_watched_path(file_type: String, c: Common) -> WatchedFile {
+            match file_type.as_str() {
                 "Symlink" => WatchedFile::Symlink(c),
                 "Directory" => WatchedFile::Directory(c),
                 "Regular" => WatchedFile::Regular(c),
@@ -1476,7 +1496,7 @@ mod tests {
 
         fn re_to_option(re: &Regex, s: &String) -> Option<PathBuf> {
             let caps = cap_must(re, s);
-            let raw = cap_get_must(caps, 1);
+            let raw = cap_get_must(&caps, 1);
             if raw == "None" {
                 None
             } else {
@@ -1541,7 +1561,7 @@ mod tests {
         match PeerWatcher::run("/") {
             Err(e) => {
                 match e.err {
-                    Error::PeerWatcherFileIsRoot => (),
+                    Error::FileWatcherFileIsRoot => (),
                     wrong => panic!("Unexpected error returned {:?}", wrong),
                 }
             }
