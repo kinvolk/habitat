@@ -79,6 +79,7 @@ impl PeerWatcher {
     fn setup_watcher(path: PathBuf) -> Result<Arc<AtomicBool>> {
         let have_events = Arc::new(AtomicBool::new(false));
         let have_events_for_thread = Arc::clone(&have_events);
+
         ThreadBuilder::new()
             .name(format!("peer-watcher-[{}]", path.display()))
             .spawn(move || {
@@ -88,11 +89,12 @@ impl PeerWatcher {
                     let callbacks = PeerCallbacks {
                         have_events: have_events_for_loop,
                     };
+                    // TODO why clone here instead of borrowing?
                     let mut file_watcher = match FileWatcher::new(path.clone(), callbacks) {
                         Ok(w) => w,
                         Err(err) => {
                             outputln!(
-                                "PeerWatcher({}) could create file watcher, ending thread ({})",
+                                "PeerWatcher({}) could not create file watcher, ending thread ({})",
                                 path.display(),
                                 err
                             );
