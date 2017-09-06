@@ -27,6 +27,7 @@ use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 const WATCHER_DELAY_MS: u64 = 2_000;
 static LOGKEY: &'static str = "PW";
 
+// Callbacks are attached to events.
 pub trait Callbacks {
     fn listening_for_events(&mut self);
     fn stopped_listening(&mut self);
@@ -43,11 +44,13 @@ struct DirFileName {
 }
 
 pub struct FileWatcher<C: Callbacks> {
+    // The directory and filename to watch
     dir_file_name: DirFileName,
     callbacks: C,
 }
 
 impl DirFileName {
+    // split_path separates the dirname from the basename.
     fn split_path(path: PathBuf) -> Option<Self> {
         let parent = match path.parent() {
             None => return None,
@@ -95,6 +98,7 @@ impl SplitPath {
     }
 }
 
+// TODO document this
 struct ProcessPathArgs {
     path: PathBuf,
     path_rest: VecDeque<OsString>,
@@ -156,6 +160,7 @@ impl Common {
     }
 }
 
+// TODO document
 struct CommonGenerator {
     prev: Option<PathBuf>,
     keep_prev: bool,
@@ -194,9 +199,12 @@ impl CommonGenerator {
         self.path_rest = path_rest;
     }
 
+    // get_new_common extracts a new common component from the `path_rest` vec.
     fn get_new_common(&mut self) -> Option<Common> {
         if let Some(component) = self.path_rest.pop_front() {
             let prev = self.prev.clone();
+
+            // TODO what is going on here?
             if self.keep_prev {
                 self.keep_prev = false;
             } else {
@@ -287,7 +295,9 @@ fn simplify_abs_path(abs_path: &PathBuf) -> PathBuf {
     simple
 }
 
+// TODO what is this?
 struct PathProcessState {
+    // start_path is the place in the filesystem tree where watching starts.
     start_path: PathBuf,
     // TODO: Figure out if we can perform loop detection without this
     // hash map, but only using whatever data we have in Paths.
@@ -306,7 +316,9 @@ enum PathsAction {
     RestartWatching
 }
 
+// Paths holds the state with regards to watching.
 struct Paths {
+    // TODO why do we need paths and dirs?
     paths: HashMap<PathBuf, WatchedFile>,
     dirs: HashMap</*watched directory: */PathBuf, /* watched files count: */ u32>,
     process_state: PathProcessState,
@@ -346,22 +358,29 @@ impl Paths {
         }
     }
 
+    // generate_watch_paths returns a list of paths to watch, based on the configured `start_path`.
     fn generate_watch_paths(&mut self) -> Vec<PathBuf> {
         let process_args = Self::path_for_processing(&self.process_state.start_path);
 
         self.process_path(process_args)
     }
 
+    // Given a path, path_for_processing separates the root from the rest, and stores them in a
+    // ProcessPathArgs struct.
     fn path_for_processing(simplified_abs_path: &PathBuf) -> ProcessPathArgs {
+        // path holds the `/` component of a path, or the path prefix on Windows (e.g. `C:`).
         let mut path = PathBuf::new();
+        // path_rest holds all other components of a path.
         let mut path_rest = VecDeque::new();
 
+        // components are substrings between path separators ('/' or '\')
         for component in simplified_abs_path.components() {
             match component {
                 Component::Prefix(_) | Component::RootDir => {
                     path.push(component.as_os_str().to_owned());
                 }
                 Component::Normal(c) => path_rest.push_back(c.to_owned()),
+                // Respectively the `.`. and `..` components of a path.
                 Component::CurDir | Component::ParentDir => panic!("the path should be simplified"),
             };
         }
@@ -374,11 +393,14 @@ impl Paths {
         }
     }
 
+    // Navigates through each of the components of the watched paths, deciding what action to
+    // take for each of them.
     fn process_path(&mut self, args: ProcessPathArgs) -> Vec<PathBuf> {
         let mut common_generator = CommonGenerator::new(args);
         let mut new_watches = Vec::new();
 
         self.process_state.file_exists = false;
+
         while let Some(common) = common_generator.get_new_common() {
             let dir_file_name = common.dir_file_name.clone();
 
@@ -709,9 +731,13 @@ enum EventAction {
     SettlePath(PathBuf),
 }
 
+// WatcherData holds all the information a file watcher needs to work.
 struct WatcherData<W: Watcher> {
+    // The watcher itself.
     watcher: W,
+    // A channel for receiving events.
     rx: Receiver<DebouncedEvent>,
+    // The paths to watch.
     paths: Paths,
 }
 
@@ -739,6 +765,7 @@ impl<C: Callbacks> FileWatcher<C> {
     }
 
     pub fn run(&mut self) -> Result<()> {
+        // RecommendedWatcher automatically selects the best implementation for the platform.
         self.run_with::<RecommendedWatcher>()
     }
 
@@ -750,13 +777,20 @@ impl<C: Callbacks> FileWatcher<C> {
         Ok(())
     }
 
+    // create_watcher_data creates a watcher and runs it on the configured directories.
     fn create_watcher_data<W: Watcher>(&mut self) -> Result<WatcherData<W>> {
         let (mut w, rx) = match self.create_watcher::<W>() {
             Ok((w, rx)) => (w, rx),
             Err(err) => return Err(err),
         };
+
+        // Initialize the Paths struct, which will hold all state relative to file watching.
         let mut paths = Paths::new(&self.dir_file_name.as_path());
+
+        // Generate list of paths to watch.
         let directories = paths.generate_watch_paths();
+
+        // Start watcher on each path.
         for directory in directories {
             if let Err(err) = w.watch(
                 &directory,
@@ -777,6 +811,10 @@ impl<C: Callbacks> FileWatcher<C> {
         })
     }
 
+    // create_watcher creates a watcher and returns events in an infinite loop.
+    // The watcher is a delayed watcher, which means that events will not be delivered instantly,
+    // but after the delay has expired. This allows it to only receive complete events, at the cost
+    // of being less responsive.
     fn create_watcher<W: Watcher>(&mut self) -> Result<(W, Receiver<DebouncedEvent>)> {
         loop {
             let (tx, rx) = channel();
