@@ -1071,7 +1071,7 @@ impl<C: Callbacks> FileWatcher<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     use std::fs::{self, DirBuilder, File, OpenOptions};
     use std::os::unix::fs as unix_fs;
     use tempdir::TempDir;
@@ -1114,25 +1114,20 @@ mod tests {
         checks: Vec<Check>,
     }
 
-    fn prepend_root(root: &PathBuf, p: &PathBuf) -> PathBuf {
-        let stripped = p.strip_prefix("/").unwrap().to_owned();
-        root.join(stripped)
-    }
-
     impl TestCase {
         fn run(&self, root: &PathBuf) {
             for cmd in self.init_commands {
                 match cmd {
                     InitCommand::MakeDir(p) => {
-                        fs::create_dir_all(prepend_root(root, &p)).unwrap();
+                        fs::create_dir_all(Self::prepend_root(root, &p)).unwrap();
                     }
                     InitCommand::Touch(p) => {
-                        File::create(prepend_root(root, &p)).unwrap();
+                        File::create(Self::prepend_root(root, &p)).unwrap();
                     }
                     InitCommand::Link(t, p) => {
-                        let pp = prepend_root(root, &p);
+                        let pp = Self::prepend_root(root, &p);
                         let tt = if t.is_absolute() {
-                            prepend_root(root, &t)
+                            Self::prepend_root(root, &t)
                         } else {
                             t
                         };
@@ -1144,25 +1139,25 @@ mod tests {
             for check in self.checks {
                 match check.action {
                     CheckAction::CreateSymlink(p, t) => {
-                        let pp = prepend_root(root, &p);
+                        let pp = Self::prepend_root(root, &p);
                         let tt = if t.is_absolute() {
-                            prepend_root(root, &t)
+                           Self::prepend_root(root, &t)
                         } else {
                             t
                         };
                         unix_fs::symlink(tt, pp).unwrap()
                     }
                     CheckAction::CreateDirectory(p) => {
-                        fs::create_dir_all(prepend_root(root, &p)).unwrap();
+                        fs::create_dir_all(Self::prepend_root(root, &p)).unwrap();
                     }
                     CheckAction::CreateFile(p) => {
-                        File::create(prepend_root(root, &p)).unwrap();
+                        File::create(Self::prepend_root(root, &p)).unwrap();
                     }
                     CheckAction::Move(f, t) => {
-                        fs::rename(prepend_root(root, &f), prepend_root(root, &t)).unwrap();
+                        fs::rename(Self::prepend_root(root, &f),Self::prepend_root(root, &t)).unwrap();
                     }
                     CheckAction::Remove(p) => {
-                        let pp = prepend_root(root, &p);
+                        let pp = Self::prepend_root(root, &p);
                         let m = pp.symlink_metadata().unwrap();
                         let t = m.file_type();
                         if t.is_dir() {
@@ -1176,6 +1171,12 @@ mod tests {
                 // TODO: compare paths and dirs
             }
         }
+
+        fn prepend_root(root: &PathBuf, p: &PathBuf) -> PathBuf {
+            let stripped = p.strip_prefix("/").unwrap().to_owned();
+            root.join(stripped)
+        }
+
     }
 
     enum Stage {
@@ -1193,7 +1194,6 @@ mod tests {
     struct TestParser {
         stage: Stage,
         path: PathBuf,
-        reader: BufReader<File>,
 
         initRe: Regex,
         initTouchRe: Regex,
@@ -1274,11 +1274,12 @@ mod tests {
         }
 
         fn parse(&mut self) -> Result<Vec<TestCase>,()> {
-            self.setup_reader()?;
+            let reader = get_reader(&self.path)?;
             let mut tests = Vec::new();
             let mut test_case = TestCase::default();
             let mut current_check = None;
-            for line in self.reader.lines() {
+
+            for line in reader.lines() {
                 let line = line.unwrap();
 
                 if let Some(idx) = line.find("//") {
@@ -1349,7 +1350,7 @@ mod tests {
                                 panic!("test case with no checks")
                             }
                             tests.push(test_case);
-                            test_case = TestCase::Default();
+                            test_case = TestCase::default();
                             self.stage = Stage::Outro;
                             continue;
                         }
@@ -1357,8 +1358,8 @@ mod tests {
                             if test_case.checks.is_empty() {
                                 panic!("test case with no checks")
                             }
-                            test_case.push(test_case);
-                            test_case = TestCase::Default();
+                            tests.push(test_case);
+                            test_case = TestCase::default();
                             self.stage = Stage::TestInitLine;
                             continue;
                         }
@@ -1424,19 +1425,19 @@ mod tests {
                 }
             };
 
-            if self.stage != Stage::Outro {
+            if let Stage::Outro = self.stage {
                 panic!("premature end of file");
             }
 
-            test_case
+            Ok(tests)
         }
 
-        fn setup_reader(&mut self) -> Result<(),()> {
-            let file = File::open(&self.path).map_err(|err| {
-                return sup_error!(Error::Io(err));
+        fn get_reader(path: &PathBuf) -> Result<BufReader<File>, io::Error> {
+            let file = File::open(path).map_err(|err| {
+                sup_error!(Error::Io(err));
             })?;
 
-            self.reader = BufReader::new(file);
+            BufReader::new(file)
         }
 
         fn get_expath(test_case: &TestCase, s: String) -> PathBuf {
@@ -1479,7 +1480,7 @@ mod tests {
             let dir = cap_get_must(caps, 1);
             let count_string = cap_get_must(caps, 2);
             let count = count_string.parse::<u32>().unwrap();
-            if test_case.checks.last_mut().unwrap().dirs.insert(dir, count).is_some() {
+            if test_case.checks.last_mut().unwrap().dirs.insert(PathBuf::from(dir), count).is_some() {
                 panic!("duplicated dir in check actions");
             }
             cap_get(caps, 3).is_some()
@@ -1491,7 +1492,7 @@ mod tests {
             let body = cap_get_must(caps, 3);
             let common = self.common_from_body(body);
             let watched_file = Self::get_watched_path(file_type, common);
-            if test_case.checks.last_mut().unwrap().paths.insert(path, watched_file).is_some() {
+            if test_case.checks.last_mut().unwrap().paths.insert(PathBuf::from(path), watched_file).is_some() {
                 panic!("duplicated path in check actions");
             }
             cap_get(caps, 4).is_some()
@@ -1503,13 +1504,16 @@ mod tests {
 
             let path_rest_caps = cap_must(&self.commonBodyPathRest, &body);
             let path_rest_raw = cap_get_must(&path_rest_caps, 1);
-            let path_rest = path_rest_raw.split(",").map(|s| {
-                let tmp = s.trim();
-                if tmp.is_empty() {
-                    panic!("empty path");
-                }
-                OsString::from(tmp)
-            });
+            let path_rest: VecDeque<OsString> = path_rest_raw
+                .split(",")
+                .map(|s| {
+                    let tmp = s.trim();
+                    if tmp.is_empty() {
+                        panic!("empty path");
+                    }
+                    OsString::from(tmp)
+                })
+                .collect();
 
             Common {
                 path: PathBuf::new(),
