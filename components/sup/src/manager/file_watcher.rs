@@ -1072,19 +1072,20 @@ impl<C: Callbacks> FileWatcher<C> {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, VecDeque};
+    use std::ffi::OsString;
     use std::fs::{self, DirBuilder, File, OpenOptions};
+    use std::io::BufReader;
+    use std::io::prelude::*;
     use std::os::unix::fs as unix_fs;
-    use tempdir::TempDir;
-    use super::super::PeerWatcher;
-    use super::{Common, DirFileName, WatchedFile};
+    use std::path::{Component, PathBuf};
+
     use butterfly::member::Member;
     use config::GOSSIP_DEFAULT_PORT;
-    use std::io::prelude::*;
-    use std::io::BufReader;
-    use std::path::{Component, PathBuf};
     use error::Error;
     use regex::{Captures, Regex};
-    use std::ffi::OsString;
+    use super::super::PeerWatcher;
+    use super::{Common, DirFileName, WatchedFile};
+    use tempdir::TempDir;
 
     enum InitCommand {
         MakeDir(PathBuf),
