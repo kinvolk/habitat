@@ -1087,7 +1087,7 @@ mod tests {
 
     use butterfly::member::Member;
     use config::GOSSIP_DEFAULT_PORT;
-    use error::Error;
+    use error::{Error, SupError};
     use regex::{Captures, Regex};
     use super::super::PeerWatcher;
     use super::{Common, DirFileName, WatchedFile};
@@ -1280,8 +1280,8 @@ mod tests {
             }
         }
 
-        fn parse(&mut self) -> Result<Vec<TestCase>,()> {
-            let reader = get_reader(&self.path)?;
+        fn parse(&mut self) -> Result<Vec<TestCase>, SupError> {
+            let reader = Self::get_reader(&self.path)?;
             let mut tests = Vec::new();
             let mut test_case = TestCase::default();
             let mut current_check = None;
@@ -1439,12 +1439,11 @@ mod tests {
             Ok(tests)
         }
 
-        fn get_reader(path: &PathBuf) -> Result<BufReader<File>, io::Error> {
-            let file = File::open(path).map_err(|err| {
-                sup_error!(Error::Io(err));
-            })?;
-
-            BufReader::new(file)
+        fn get_reader(path: &PathBuf) -> Result<BufReader<File>, SupError> {
+            match File::open(path) {
+                Ok(file) => Ok(BufReader::new(file)),
+                Err(err) => Err(sup_error!(Error::Io(err))),
+            }
         }
 
         fn get_expath(test_case: &TestCase, s: String) -> PathBuf {
