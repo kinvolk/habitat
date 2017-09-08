@@ -1292,7 +1292,7 @@ mod tests {
         }
 
         fn parse(&mut self) -> Result<Vec<TestCase>, SupError> {
-            let reader = Self::get_reader(&self.path)?;
+            let reader = Self::get_reader(&self.path);
             let mut tests = Vec::new();
             let mut test_case = TestCase::default();
             let mut current_check = None;
@@ -1450,11 +1450,11 @@ mod tests {
             Ok(tests)
         }
 
-        fn get_reader(path: &PathBuf) -> Result<BufReader<File>, SupError> {
-            match File::open(path) {
-                Ok(file) => Ok(BufReader::new(file)),
-                Err(err) => Err(sup_error!(Error::Io(err))),
-            }
+        fn get_reader(path: &PathBuf) -> BufReader<File> {
+           match File::open(path) {
+                Ok(file) => BufReader::new(file),
+                Err(err) => panic!("couldn't open {:?}: {:?}", path, err),
+           }
         }
 
         fn get_expath(test_case: &TestCase, s: String) -> PathBuf {
