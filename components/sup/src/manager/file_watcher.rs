@@ -98,7 +98,7 @@ impl SplitPath {
     }
 }
 
-// TODO document this
+// TODO(asymmetric): document this
 struct ProcessPathArgs {
     path: PathBuf,
     path_rest: VecDeque<OsString>,
@@ -160,7 +160,7 @@ impl Common {
     }
 }
 
-// TODO document
+// TODO(asymmetric): document
 struct CommonGenerator {
     prev: Option<PathBuf>,
     keep_prev: bool,
@@ -204,7 +204,7 @@ impl CommonGenerator {
         if let Some(component) = self.path_rest.pop_front() {
             let prev = self.prev.clone();
 
-            // TODO what is going on here?
+            // TODO(asymmetric): what is going on here?
             if self.keep_prev {
                 self.keep_prev = false;
             } else {
@@ -295,7 +295,7 @@ fn simplify_abs_path(abs_path: &PathBuf) -> PathBuf {
     simple
 }
 
-// TODO what is this?
+// TODO(asymmetric): what is this?
 struct PathProcessState {
     // start_path is the place in the filesystem tree where watching starts.
     start_path: PathBuf,
@@ -305,6 +305,23 @@ struct PathProcessState {
     file_exists: bool,
 }
 
+// TODO(asymmetric): Document the difference between PathsAction and EventAction.
+// EventActions are high-level actions to be performed in response to filesystem events.
+enum EventAction {
+    Ignore,
+    PlainChange,
+    RestartWatching,
+    AddRegular(PathsActionData),
+    DropRegular(PathsActionData),
+    AddDirectory(PathsActionData),
+    DropDirectory(PathsActionData),
+    RewireSymlink(PathsActionData),
+    DropSymlink(PathsActionData),
+    SettlePath(PathBuf),
+}
+
+
+// Lower-level actions, created to execute `EventAction`s.
 enum PathsAction {
     NotifyFileAppeared,
     NotifyFileModified,
@@ -318,7 +335,7 @@ enum PathsAction {
 
 // Paths holds the state with regards to watching.
 struct Paths {
-    // TODO why do we need paths and dirs?
+    // TODO(asymmetric): why do we need paths and dirs?
     paths: HashMap<PathBuf, WatchedFile>,
     dirs: HashMap</*watched directory: */PathBuf, /* watched files count: */ u32>,
     process_state: PathProcessState,
@@ -548,6 +565,7 @@ impl Paths {
     }
 
     fn drop_watch(&mut self, path: &PathBuf) -> Option<PathBuf> {
+        // TODO(asymmetric): when can we get None here? Explain.
         if let Some(watched_file) = self.paths.remove(path) {
             let common = watched_file.steal_common();
             let unwatch_directory;
@@ -565,6 +583,7 @@ impl Paths {
                 return Some(dir_path);
             }
         }
+
         None
     }
 
@@ -718,19 +737,6 @@ impl Paths {
     }
 }
 
-enum EventAction {
-    Ignore,
-    PlainChange,
-    RestartWatching,
-    AddRegular(PathsActionData),
-    DropRegular(PathsActionData),
-    AddDirectory(PathsActionData),
-    DropDirectory(PathsActionData),
-    RewireSymlink(PathsActionData),
-    DropSymlink(PathsActionData),
-    SettlePath(PathBuf),
-}
-
 // WatcherData holds all the information a file watcher needs to work.
 struct WatcherData<W: Watcher> {
     // The watcher itself.
@@ -843,6 +849,7 @@ impl<C: Callbacks> FileWatcher<C> {
     }
 
     fn handle_event<W: Watcher>(
+        // TODO(asymmetric): does this need to be mut?
         &mut self,
         watcher_data: &mut WatcherData<W>,
         event: DebouncedEvent,
@@ -851,8 +858,10 @@ impl<C: Callbacks> FileWatcher<C> {
         let watcher = &mut watcher_data.watcher;
         let mut actions = VecDeque::new();
 
+        // Gather the high-level actions.
         actions.extend(Self::get_paths_actions(paths, event));
 
+        // Perform lower-level actions.
         while let Some(action) = actions.pop_front()  {
             match action {
                 PathsAction::NotifyFileAppeared => {
@@ -914,6 +923,7 @@ impl<C: Callbacks> FileWatcher<C> {
         actions
     }
 
+    // Maps `EventAction`s to one or more lower-level `PathsAction`s .
     fn get_paths_actions(paths: &Paths, event: DebouncedEvent) -> Vec<PathsAction> {
         let mut actions = Vec::new();
         for event_action in Self::get_event_actions(paths, event) {
@@ -976,13 +986,14 @@ impl<C: Callbacks> FileWatcher<C> {
         actions
     }
 
+    // Maps filesystem events to high-level actions.
     fn get_event_actions(paths: &Paths, event: DebouncedEvent) -> Vec<EventAction> {
         // Usual actions on files and resulting events (assuming that
         // a and b are in the same directory which we watch)
         // touch a - Create(a)
         // ln -sf foo a (does not matter if symlink a did exist before)- Create(a)
         // mkdir a - Create(a)
-        // mv a b (does not matter if b did exist or not) - NoticeRemove(a), Rename(a, b)
+        // mv a b (does not matter if b existed or not) - NoticeRemove(a), Rename(a, b)
         // mv ../a . - Create(a)
         // mv a .. - NoticeRemove(a), Remove(a)
         // rm a - NoticeRemove(a), Remove(a)
