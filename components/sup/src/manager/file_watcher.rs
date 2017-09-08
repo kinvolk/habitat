@@ -742,8 +742,12 @@ struct WatcherData<W: Watcher> {
 }
 
 impl<C: Callbacks> FileWatcher<C> {
-    pub fn new<P: Into<PathBuf>>(path: P, callbacks: C) -> Result<Self> {
+    pub fn new<P>(path: P, callbacks: C) -> Result<Self>
+    where
+        P: Into<PathBuf>
+    {
         let dir_file_name = Self::watcher_path(path.into())?;
+
         Ok(Self {
             dir_file_name: dir_file_name,
             callbacks: callbacks,
@@ -846,7 +850,9 @@ impl<C: Callbacks> FileWatcher<C> {
         let paths = &mut watcher_data.paths;
         let watcher = &mut watcher_data.watcher;
         let mut actions = VecDeque::new();
+
         actions.extend(Self::get_paths_actions(paths, event));
+
         while let Some(action) = actions.pop_front()  {
             match action {
                 PathsAction::NotifyFileAppeared => {
