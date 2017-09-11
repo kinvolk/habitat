@@ -866,7 +866,7 @@ impl Manager {
             Some(ref watcher) => {
                 if watcher.has_fs_events() {
                     let members = watcher.get_members()?;
-                    self.butterfly.set_peer_seed(members)?;
+                    self.butterfly.member_list.set_initial_members(members);
                 }
                 Ok(())
             }

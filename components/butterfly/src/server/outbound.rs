@@ -83,9 +83,9 @@ impl Outbound {
     /// period to finish before starting the next probe.
     pub fn run(&mut self) {
         let mut have_members = false;
-        let num_initial = self.server.member_list.len_initial_members();
         loop {
             if !have_members {
+                let num_initial = self.server.member_list.len_initial_members();
                 if num_initial != 0 {
                     // The minimum that's strictly more than half
                     let min_to_start = num_initial / 2 + 1;
@@ -102,25 +102,6 @@ impl Outbound {
                                 None,
                             );
                         });
-                    }
-                } else {
-                    if self.server.member_list.len() > 0 {
-                        have_members = true;
-                    } else {
-                        for member in self.server
-                            .peer_seed
-                            .read()
-                            .expect("Peer seed lock is poisoned")
-                            .iter()
-                        {
-                            ping(
-                                &self.server,
-                                &self.socket,
-                                member,
-                                member.swim_socket_address(),
-                                None,
-                            );
-                        }
                     }
                 }
             }
