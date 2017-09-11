@@ -1295,7 +1295,6 @@ mod tests {
             let reader = Self::get_reader(&self.path);
             let mut tests = Vec::new();
             let mut test_case = TestCase::default();
-            let mut current_check = None;
 
             for line in reader.lines() {
                 let line = line.unwrap();
