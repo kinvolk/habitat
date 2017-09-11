@@ -176,7 +176,6 @@ mod tests {
         File::create(&path).unwrap();
         let watcher = PeerWatcher::run(path).unwrap();
 
-        assert_eq!(true, watcher.has_fs_events());
         assert_eq!(watcher.get_members().unwrap(), vec![]);
     }
 
@@ -208,45 +207,5 @@ mod tests {
             member.set_id(String::new());
         }
         assert_eq!(expected_members, members);
-    }
-
-    #[test]
-    fn bad_path_root() {
-        match PeerWatcher::run("/") {
-            Err(e) => {
-                match e.err {
-                    Error::PeerWatcherFileIsRoot => (),
-                    wrong => panic!("Unexpected error returned {:?}", wrong),
-                }
-            }
-            Ok(_) => panic!("Watcher should fail to run"),
-        }
-    }
-
-    #[test]
-    fn bad_path_not_a_dir() {
-        let tmpdir = TempDir::new("peerwatchertest").unwrap();
-        let wrong_path = tmpdir.path().join("should_be_a_dir_but_is_a_file");
-        let bogus_path = wrong_path.join("bogus_file");
-        File::create(&wrong_path).unwrap();
-        match PeerWatcher::run(&bogus_path) {
-            Err(e) => {
-                match e.err {
-                    Error::PeerWatcherDirNotFound(_) => (),
-                    wrong => panic!("Unexpected error returned {:?}", wrong),
-                }
-            }
-            Ok(_) => panic!("Watcher should fail to run"),
-        }
-    }
-
-    #[test]
-    fn ignore_watched_dir() {
-        let tmpdir = TempDir::new("peerwatchertest").unwrap();
-        let ignored_path = tmpdir.path().join("should_be_ignored");
-        DirBuilder::new().create(&ignored_path).unwrap();
-        let watcher = PeerWatcher::run(&ignored_path).unwrap();
-        assert_eq!(false, watcher.has_fs_events());
-        assert_eq!(watcher.get_members().unwrap(), vec![]);
     }
 }
