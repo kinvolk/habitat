@@ -1108,3 +1108,112 @@ impl<C: Callbacks> FileWatcher<C> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::fs::{DirBuilder, File};
+    use std::os::unix::fs::symlink;
+    use std::path::Path;
+
+    use error::SupError;
+    use super::{Callbacks, FileWatcher};
+
+    #[derive(Default)]
+    struct TestCallbacks {
+        pub disappeared_events: i32,
+        pub appeared_events: i32,
+    }
+
+    const filename: &str = "peer-watch-file";
+    const data_symlink_name: &str = "..data";
+
+    impl Callbacks for TestCallbacks {
+        fn file_appeared(&mut self, real_path: &Path) {
+            println!("file {:?} appeared!", real_path);
+            self.appeared_events += 1;
+
+            if self.appeared_events == 1 {
+                // Create new timestamped directory.
+                let new_timestamped_dir = Path::new("bar");
+                DirBuilder::new().create(&new_timestamped_dir).expect(
+                    "creating new data dir",
+                );
+
+                // Create temp symlink for the new data dir.
+                let temp_data_symlink_name = "..data_tmp";
+                symlink(&new_timestamped_dir, temp_data_symlink_name).expect("creating data dir symlink");
+
+                // Create new file.
+                let file_path = Path::new(&new_timestamped_dir).join(&filename);
+                File::create(&file_path).expect("creating peer-watch-file in new timestamped dir");
+
+                // Update data to point to the new timestamped dir, using a rename which is atomic on Unix.
+                fs::rename(&temp_data_symlink_name, &data_symlink_name).expect("renaming symlink");
+            }
+        }
+
+        fn file_modified(&mut self, real_path: &Path) {
+            println!("file {:?} modified!", real_path);
+        }
+
+        fn file_disappeared(&mut self, real_path: &Path) {
+            println!("file {:?} disappeared!", real_path);
+            self.disappeared_events += 1;
+        }
+        fn listening_for_events(&mut self) {
+            println!("listening for events!");
+        }
+        fn stopped_listening(&mut self) {
+            println!("stopped listening!");
+        }
+        fn error(&mut self, _: &SupError) -> bool { true }
+
+        fn continue_looping(&mut self) -> bool {
+            self.appeared_events < 2
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    // Implements the steps defined in https://git.io/v5Mz1#L85-L121
+    fn k8s_behaviour() {
+        // TODO: we could use a TempDir, but then the symlinks would not point exactly the same way
+        // as in kubernetes. This is because I can't just change directory, as tests are run in
+        // parallel threads.
+        let timestamped_dir = Path::new("foo");
+
+        DirBuilder::new().create(&timestamped_dir).expect(
+            "creating data dir",
+        );
+
+        // Create a file in the timestamped dir.
+        let file_path = Path::new(&timestamped_dir).join(&filename);
+        File::create(&file_path).expect("creating peer-watch-file");
+
+        // Create a data dir as a symlink to a timestamped dir, e.g. `..data -> ..123456`.
+        symlink(&timestamped_dir, data_symlink_name).expect("creating data dir symlink");
+
+        // Create a relative symlink to the file, i.e. `peer-watch-file -> ..data/peer-watch-file`.
+        let file_symlink_path = Path::new(&data_symlink_name).join(&filename);
+        symlink(&file_symlink_path, &filename).expect("creating first file symlink");
+
+        // Create file watcher.
+        println!("watching {:?}", &filename);
+        let cb = TestCallbacks::default();
+        let mut fw = FileWatcher::new(&filename, cb).expect("creating file watcher");
+        fw.run().expect("running file watcher");
+
+        // Remove old timestamped dir.
+        fs::remove_dir_all(timestamped_dir).unwrap();
+
+        // The first appeared event is emitted when the watcher finds the already-existing file.
+        assert_eq!(fw.callbacks.appeared_events, 2, "appeared events");
+        assert_eq!(fw.callbacks.disappeared_events, 1, "disappeared events");
+
+        // Clean up.
+        fs::remove_file(data_symlink_name).unwrap();
+        fs::remove_file(filename).unwrap();
+        fs::remove_dir_all("bar").unwrap();
+    }
+}
