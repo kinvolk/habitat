@@ -1086,3 +1086,66 @@ impl<C: Callbacks> FileWatcher<C> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::fs;
+    use std::fs::{DirBuilder, File};
+    use std::os::unix::fs::symlink;
+
+    use chrono::prelude::*;
+
+    #[test]
+    #[cfg(unix)]
+        // Implements the steps defined in https://git.io/v5Mz1#L85-L121
+    fn k8s_behaviour() {
+        // TODO: we could use a TempDir, but then the symlinks would not point exactly the same way
+        // as in kubernetes. This is because I can't just change directory, as tests are run in
+        // parallel threads.
+        let ts = Local::now().to_rfc3339();
+        let timestamped_dir = Path::new(&ts);
+
+        DirBuilder::new().create(&timestamped_dir).expect(
+            "creating data dir",
+        );
+
+        // Create a file in the timestamped dir.
+        let filename = "peer-watch-file";
+        let mut file_path = Path::new(&timestamped_dir).join(&filename);
+        File::create(&file_path).expect("creating peer-watch-file");
+
+        // Create a data dir as a symlink to a timestamped dir, e.g. `..data -> ..123456`.
+        let data_symlink_name = "..data";
+        symlink(&timestamped_dir, data_symlink_name).expect("creating data dir symlink");
+
+        // Create a relative symlink to the file, i.e. `peer-watch-file -> ..data/peer-watch-file`.
+        let file_symlink_path = Path::new(&data_symlink_name).join(&filename);
+        symlink(&file_symlink_path, &filename).expect("creating first file symlink");
+
+        // Create new timestamped directory.
+        let new_ts = Local::now().to_rfc3339();
+        let new_timestamped_dir = Path::new(&new_ts);
+        DirBuilder::new().create(&new_timestamped_dir).expect(
+            "creating new data dir",
+        );
+
+        // Create temp symlink for the new data dir.
+        let temp_data_symlink_name = "..data_tmp";
+        symlink(&new_timestamped_dir, temp_data_symlink_name).expect("creating data dir symlink");
+
+        // Create new file.
+        file_path = Path::new(&new_timestamped_dir).join(&filename);
+        File::create(&file_path).expect("creating peer-watch-file in new timestamped dir");
+
+        // Update data to point to the new timestamped dir, using a rename which is atomic on Unix.
+        fs::rename(&temp_data_symlink_name, &data_symlink_name);
+        // Remove old timestamped dir.
+        fs::remove_dir_all(timestamped_dir).unwrap();
+
+        // Clean up.
+        fs::remove_file(data_symlink_name).unwrap();
+        fs::remove_file(filename).unwrap();
+        fs::remove_dir_all(new_timestamped_dir).unwrap();
+    }
+}
