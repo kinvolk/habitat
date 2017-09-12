@@ -439,10 +439,7 @@ impl Paths {
         self.process_state.real_file = None;
 
         while let Some(common) = common_generator.get_new_common() {
-            println!("common.path: {:?}", &common.path);
-            println!("common.path_rest: {:?}", &common.path_rest);
             let dir_file_name = common.dir_file_name.clone();
-            println!("dir_file_name: {:?}", dir_file_name);
 
             match common.path.symlink_metadata() {
                 Err(_) => {
@@ -502,15 +499,12 @@ impl Paths {
                     break;
                 }
             };
-            println!("target: {:?}", &target);
             let target_path = if target.is_absolute() {
                 target
             } else {
-                println!("directory for target: {:?}", &dir_file_name.directory);
                 dir_file_name.directory.join(target)
             };
             let simplified_target = simplify_abs_path(&target_path);
-            println!("simplified target: {:?}", &simplified_target);
             let process_args = Self::path_for_processing(&simplified_target);
             if self.symlink_loop(
                 &common.path,
@@ -896,8 +890,6 @@ impl<C: Callbacks> FileWatcher<C> {
         // Gather the high-level actions.
         actions.extend(Self::get_paths_actions(paths, event));
 
-        println!("in handle_event fn");
-        println!("paths: {:?}", paths);
         println!("actions: {:?}", actions);
         // Perform lower-level actions.
         while let Some(action) = actions.pop_front()  {
@@ -1034,6 +1026,8 @@ impl<C: Callbacks> FileWatcher<C> {
     }
 
     // Maps filesystem events to high-level actions.
+    // Every time there's a change to a file, we check whether that file is one of those we're
+    // interested in. If it isn't, we ignore the event.
     fn get_event_actions(paths: &Paths, event: DebouncedEvent) -> Vec<EventAction> {
         // Usual actions on files and resulting events (assuming that
         // a and b are in the same directory which we watch)
@@ -1142,16 +1136,22 @@ mod tests {
     use std::path::Path;
 
     use error::SupError;
+    use tempdir::TempDir;
+
     use super::{Callbacks, FileWatcher};
 
-    #[derive(Default)]
+
     struct TestCallbacks {
-        pub disappeared_events: i32,
+        temp_dir: TempDir,
         pub appeared_events: i32,
+        pub disappeared_events: i32,
     }
 
-    const filename: &str = "peer-watch-file";
-    const data_symlink_name: &str = "..data";
+    const FILENAME: &str = "peer-watch-file";
+    const DATA_DIR_NAME: &str = "..data";
+    const TEMP_DATA_DIR_NAME: &str = "..data_tmp";
+    const APPEARED_EVENTS_THRESHOLD: i32 = 2;
+    const DISAPPEARED_EVENTS_THRESHOLD: i32 = 1;
 
     impl Callbacks for TestCallbacks {
         fn file_appeared(&mut self, real_path: &Path) {
@@ -1160,21 +1160,21 @@ mod tests {
 
             if self.appeared_events == 1 {
                 // Create new timestamped directory.
-                let new_timestamped_dir = Path::new("bar");
+                let new_timestamped_dir = self.temp_dir.path().join("bar");
                 DirBuilder::new().create(&new_timestamped_dir).expect(
                     "creating new data dir",
                 );
 
-                // Create temp symlink for the new data dir.
-                let temp_data_symlink_name = "..data_tmp";
-                symlink(&new_timestamped_dir, temp_data_symlink_name).expect("creating data dir symlink");
+                // Create temp symlink for the new data dir, i.e. `..data_tmp -> bar`.
+                let temp_data_dir_path = self.temp_dir.path().join(TEMP_DATA_DIR_NAME);
+                symlink(&new_timestamped_dir, &temp_data_dir_path).expect("creating temporary data dir symlink");
 
                 // Create new file.
-                let file_path = Path::new(&new_timestamped_dir).join(&filename);
+                let file_path = new_timestamped_dir.join(&FILENAME);
                 File::create(&file_path).expect("creating peer-watch-file in new timestamped dir");
 
                 // Update data to point to the new timestamped dir, using a rename which is atomic on Unix.
-                fs::rename(&temp_data_symlink_name, &data_symlink_name).expect("renaming symlink");
+                fs::rename(&temp_data_dir_path, &self.temp_dir.path().join(DATA_DIR_NAME)).expect("renaming symlink");
             }
         }
 
@@ -1195,7 +1195,7 @@ mod tests {
         fn error(&mut self, _: &SupError) -> bool { true }
 
         fn continue_looping(&mut self) -> bool {
-            self.appeared_events < 2
+            self.appeared_events < APPEARED_EVENTS_THRESHOLD
         }
     }
 
@@ -1203,42 +1203,45 @@ mod tests {
     #[cfg(unix)]
     // Implements the steps defined in https://git.io/v5Mz1#L85-L121
     fn k8s_behaviour() {
-        // TODO: we could use a TempDir, but then the symlinks would not point exactly the same way
-        // as in kubernetes. This is because I can't just change directory, as tests are run in
-        // parallel threads.
-        let timestamped_dir = Path::new("foo");
+        let temp_dir = TempDir::new("filewatchertest").expect("creating timestamped dir");
+
+        let timestamped_dir = temp_dir.path().join("foo");
 
         DirBuilder::new().create(&timestamped_dir).expect(
-            "creating data dir",
+            "creating new data dir",
         );
 
         // Create a file in the timestamped dir.
-        let file_path = Path::new(&timestamped_dir).join(&filename);
+        let file_path = timestamped_dir.join(&FILENAME);
+        println!("creating file in {:?}", &file_path);
         File::create(&file_path).expect("creating peer-watch-file");
 
-        // Create a data dir as a symlink to a timestamped dir, e.g. `..data -> ..123456`.
-        symlink(&timestamped_dir, data_symlink_name).expect("creating data dir symlink");
+        // Create a data dir as a symlink to a timestamped dir, i.e. `..data -> ..foo`.
+        let data_dir_path = temp_dir.path().join(DATA_DIR_NAME);
+        println!("symlinking {:?} -> {:?}", &data_dir_path, &timestamped_dir);
+        symlink(&timestamped_dir, &data_dir_path).expect("creating data dir symlink");
 
         // Create a relative symlink to the file, i.e. `peer-watch-file -> ..data/peer-watch-file`.
-        let file_symlink_path = Path::new(&data_symlink_name).join(&filename);
-        symlink(&file_symlink_path, &filename).expect("creating first file symlink");
+        let file_symlink_src = data_dir_path.join(&FILENAME);
+        let file_symlink_dest = temp_dir.path().join(&FILENAME);
+        println!("symlinking {:?} -> {:?}", &file_symlink_dest, &file_symlink_src);
+        symlink(&file_symlink_src, &file_symlink_dest).expect("creating first file symlink");
 
         // Create file watcher.
-        println!("watching {:?}", &filename);
-        let cb = TestCallbacks::default();
-        let mut fw = FileWatcher::new(&filename, cb).expect("creating file watcher");
+        println!("watching {:?}", &file_path);
+        let cb = TestCallbacks {
+            appeared_events: 0,
+            disappeared_events: 0,
+            temp_dir: temp_dir,
+        };
+        let mut fw = FileWatcher::new(&file_symlink_dest, cb).expect("creating file watcher");
         fw.run().expect("running file watcher");
 
         // Remove old timestamped dir.
         fs::remove_dir_all(timestamped_dir).unwrap();
 
         // The first appeared event is emitted when the watcher finds the already-existing file.
-        assert_eq!(fw.callbacks.appeared_events, 2, "appeared events");
-        assert_eq!(fw.callbacks.disappeared_events, 1, "disappeared events");
-
-        // Clean up.
-        fs::remove_file(data_symlink_name).unwrap();
-        fs::remove_file(filename).unwrap();
-        fs::remove_dir_all("bar").unwrap();
+        assert_eq!(fw.callbacks.appeared_events, APPEARED_EVENTS_THRESHOLD, "appeared events");
+        assert_eq!(fw.callbacks.disappeared_events, DISAPPEARED_EVENTS_THRESHOLD, "disappeared events");
     }
 }
