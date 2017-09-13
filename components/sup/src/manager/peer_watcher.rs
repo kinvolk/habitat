@@ -22,8 +22,8 @@ use std::thread::Builder as ThreadBuilder;
 
 use butterfly::member::Member;
 use config::GOSSIP_DEFAULT_PORT;
-use error::{Error, Result, SupError};
-use manager::file_watcher::{Callbacks, FileWatcher};
+use error::{Error, Result};
+use manager::file_watcher::{Callbacks, default_file_watcher};
 
 static LOGKEY: &'static str = "PW";
 
@@ -32,10 +32,6 @@ pub struct PeerCallbacks {
 }
 
 impl Callbacks for PeerCallbacks {
-    fn listening_for_events(&mut self) {}
-
-    fn stopped_listening(&mut self) {}
-
     fn file_appeared(&mut self, _: &Path) {
         self.have_events.store(true, Ordering::Relaxed);
     }
@@ -46,14 +42,6 @@ impl Callbacks for PeerCallbacks {
 
     fn file_disappeared(&mut self, _: &Path) {
         self.have_events.store(true, Ordering::Relaxed)
-    }
-
-    fn error(&mut self, _: &SupError) -> bool {
-        true
-    }
-
-    fn continue_looping(&mut self) -> bool {
-        true
     }
 }
 
@@ -86,24 +74,48 @@ impl PeerWatcher {
                 //debug!("PeerWatcher({}) thread starting", abs_path.display());
                 loop {
                     let have_events_for_loop = Arc::clone(&have_events_for_thread);
-                    let callbacks = PeerCallbacks { have_events: have_events_for_loop };
-                    // TODO why clone here instead of borrowing?
-                    let mut file_watcher = match FileWatcher::new(path.clone(), callbacks) {
-                        Ok(w) => w,
-                        Err(err) => {
-                            outputln!(
-                                "PeerWatcher({}) could not create file watcher, ending thread ({})",
-                                path.display(),
-                                err
-                            );
-                            break;
-                        }
-                    };
-                    // TODO: Handle error.
-                    file_watcher.run();
+                    if Self::file_watcher_loop_body(&path, have_events_for_loop) {
+                        break;
+                    }
                 }
             })?;
         Ok(have_events)
+    }
+
+    fn file_watcher_loop_body(path: &PathBuf, have_events: Arc<AtomicBool>) -> bool {
+        let callbacks = PeerCallbacks { have_events: have_events };
+        let mut file_watcher = match default_file_watcher(&path, callbacks) {
+            Ok(w) => w,
+            Err(sup_err) => {
+                match sup_err.err {
+                    Error::NotifyError(err) => {
+                        outputln!(
+                            "PeerWatcher({}) failed to start watching the directories ({}), {}",
+                            path.display(),
+                            err,
+                            "will try again",
+                        );
+                        return false;
+                    }
+                    _ => {
+                        outputln!(
+                            "PeerWatcher({}) could not create file watcher, ending thread ({})",
+                            path.display(),
+                            sup_err
+                        );
+                        return true;
+                    }
+                }
+            }
+        };
+        if let Err(err) = file_watcher.run() {
+            outputln!(
+                "PeerWatcher({}) error during watching ({}), restarting",
+                path.display(),
+                err
+            );
+        }
+        false
     }
 
     pub fn has_fs_events(&self) -> bool {
@@ -149,13 +161,12 @@ impl PeerWatcher {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::{DirBuilder, File, OpenOptions};
+    use std::fs::{File, OpenOptions};
     use tempdir::TempDir;
     use super::PeerWatcher;
     use butterfly::member::Member;
     use config::GOSSIP_DEFAULT_PORT;
     use std::io::Write;
-    use error::Error;
 
     #[test]
     fn no_file() {

@@ -136,6 +136,7 @@ pub enum Error {
     NameLookup(io::Error),
     NetParseError(net::AddrParseError),
     NoLauncher,
+    NotifyCreateError(notify::Error),
     NotifyError(notify::Error),
     NulError(ffi::NulError),
     PackageNotFound(package::PackageIdent),
@@ -145,6 +146,7 @@ pub enum Error {
     ProcessLockCorrupt,
     ProcessLocked(u32),
     ProcessLockIO(PathBuf, io::Error),
+    RecvError(mpsc::RecvError),
     RenderContextSerialization(serde_json::Error),
     ServiceDeserializationError(serde_json::Error),
     ServiceLoaded(package::PackageIdent),
@@ -244,6 +246,7 @@ impl fmt::Display for SupError {
             Error::NameLookup(ref e) => format!("Error resolving a name or IP address: {}", e),
             Error::NetParseError(ref e) => format!("Can't parse ip:port: {}", e),
             Error::NoLauncher => format!("Supervisor must be run from `hab-launch`"),
+            Error::NotifyCreateError(ref e) => format!("Notify create error: {}", e),
             Error::NotifyError(ref e) => format!("Notify error: {}", e),
             Error::NulError(ref e) => format!("{}", e),
             Error::PackageNotFound(ref pkg) => {
@@ -277,6 +280,7 @@ impl fmt::Display for SupError {
                     err
                 )
             }
+            Error::RecvError(ref err) => format!("{}", err),
             Error::RenderContextSerialization(ref e) => {
                 format!("Unable to serialize rendering context, {}", e)
             }
@@ -376,6 +380,7 @@ impl error::Error for SupError {
             Error::NetParseError(_) => "Can't parse IP:port",
             Error::NameLookup(_) => "Error resolving a name or IP address",
             Error::NoLauncher => "Supervisor must be run from `hab-launch`",
+            Error::NotifyCreateError(_) => "Notify create error",
             Error::NotifyError(_) => "Notify error",
             Error::NulError(_) => {
                 "An attempt was made to build a CString with a null byte inside it"
@@ -389,6 +394,7 @@ impl error::Error for SupError {
                 "Another instance of the Habitat Supervisor is already running"
             }
             Error::ProcessLockIO(_, _) => "Unable to read or write to a process lock",
+            Error::RecvError(_) => "A channel failed to receive a response",
             Error::RenderContextSerialization(_) => "Unable to serialize rendering context",
             Error::ServiceDeserializationError(_) => "Can't deserialize service status",
             Error::ServiceNotLoaded(_) => "Service status called when service not loaded",
@@ -492,6 +498,12 @@ impl From<string::FromUtf8Error> for SupError {
 impl From<str::Utf8Error> for SupError {
     fn from(err: str::Utf8Error) -> SupError {
         sup_error!(Error::StrFromUtf8Error(err))
+    }
+}
+
+impl From<mpsc::RecvError> for SupError {
+    fn from(err: mpsc::RecvError) -> SupError {
+        sup_error!(Error::RecvError(err))
     }
 }
 

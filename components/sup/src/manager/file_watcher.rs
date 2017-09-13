@@ -21,7 +21,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
-use error::{Error, Result, SupError};
+use error::{Error, Result};
+use notify;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 
 const WATCHER_DELAY_MS: u64 = 2_000;
@@ -29,13 +30,9 @@ static LOGKEY: &'static str = "PW";
 
 // Callbacks are attached to events.
 pub trait Callbacks {
-    fn listening_for_events(&mut self);
-    fn stopped_listening(&mut self);
     fn file_appeared(&mut self, real_path: &Path);
     fn file_modified(&mut self, real_path: &Path);
     fn file_disappeared(&mut self, real_path: &Path);
-    fn error(&mut self, err: &SupError) -> bool;
-    fn continue_looping(&mut self) -> bool;
 }
 
 #[derive(Clone, Debug, Default)]
@@ -44,15 +41,9 @@ struct DirFileName {
     file_name: OsString,
 }
 
-pub struct FileWatcher<C: Callbacks> {
-    // The directory and filename to watch
-    dir_file_name: DirFileName,
-    pub callbacks: C,
-}
-
 impl DirFileName {
     // split_path separates the dirname from the basename.
-    fn split_path(path: PathBuf) -> Option<Self> {
+    fn split_path(path: &PathBuf) -> Option<Self> {
         let parent = match path.parent() {
             None => return None,
             Some(p) => p,
@@ -197,6 +188,8 @@ impl Common {
 // This is only used to generate the Common struct for each item we
 // have in the path, so for /h-o/peers, it will generate data for /h-o
 // and for /h-o/peers.
+//
+// TODO(krnowak): rename
 struct CommonGenerator {
     // What was the last item we processed, complicated in case of
     // symlinks.
@@ -847,33 +840,72 @@ impl Paths {
     }
 }
 
-// WatcherData holds all the information a file watcher needs to work.
-struct WatcherData<W: Watcher> {
+pub struct FileWatcher<C: Callbacks, W: Watcher> {
+    callbacks: C,
     // The watcher itself.
     watcher: W,
     // A channel for receiving events.
     rx: Receiver<DebouncedEvent>,
     // The paths to watch.
     paths: Paths,
+    initial_real_file: Option<PathBuf>,
 }
 
-impl<C: Callbacks> FileWatcher<C> {
+pub fn default_file_watcher<C, P>(
+    path: P,
+    callbacks: C,
+) -> Result<FileWatcher<C, RecommendedWatcher>>
+where
+    P: Into<PathBuf>,
+    C: Callbacks,
+{
+    return FileWatcher::<C, RecommendedWatcher>::new(path, callbacks);
+}
+
+impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
     pub fn new<P>(path: P, callbacks: C) -> Result<Self>
     where
         P: Into<PathBuf>,
     {
-        let dir_file_name = Self::watcher_path(path.into())?;
+        let (tx, rx) = channel();
+        let mut watcher = W::new(tx, Duration::from_millis(WATCHER_DELAY_MS))
+            .map_err(|err| sup_error!(Error::NotifyCreateError(err)))?;
+        let start_path = Self::watcher_path(path.into())?;
+        // Initialize the Paths struct, which will hold all state relative to file watching.
+        let mut paths = Paths::new(&start_path);
+
+        // Generate list of paths to watch.
+        let directories = paths.generate_watch_paths();
+
+        // Start watcher on each path.
+        for directory in directories {
+            watcher
+                .watch(&directory, RecursiveMode::NonRecursive)
+                .map_err(|err| sup_error!(Error::NotifyError(err)))?;
+        }
+        let initial_real_file = paths.process_state.real_file.clone();
 
         Ok(Self {
-            dir_file_name: dir_file_name,
             callbacks: callbacks,
+            // The watcher itself.
+            watcher: watcher,
+            // A channel for receiving events.
+            rx: rx,
+            // The paths to watch.
+            paths: paths,
+            initial_real_file: initial_real_file,
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn get_callbacks(&self) -> &C {
+        &self.callbacks
     }
 
     // turns given path to an simplified absolute path.
     //
     // simplified means that it is without . and ..
-    fn watcher_path(p: PathBuf) -> Result<DirFileName> {
+    fn watcher_path(p: PathBuf) -> Result<PathBuf> {
         let abs_path = if p.is_absolute() {
             p.clone()
         } else {
@@ -881,108 +913,40 @@ impl<C: Callbacks> FileWatcher<C> {
             cwd.join(p)
         };
         let simplified_abs_path = simplify_abs_path(&abs_path);
-        match DirFileName::split_path(simplified_abs_path) {
-            Some(dir_file_name) => Ok(dir_file_name),
+        match DirFileName::split_path(&simplified_abs_path) {
+            Some(_) => Ok(simplified_abs_path),
             None => Err(sup_error!(Error::FileWatcherFileIsRoot)),
         }
     }
 
     pub fn run(&mut self) -> Result<()> {
-        // RecommendedWatcher automatically selects the best implementation for the platform.
-        self.run_with::<RecommendedWatcher>()
-    }
-
-    fn run_with<W: Watcher>(&mut self) -> Result<()> {
-        let watcher_data = self.create_watcher_data::<W>()?;
-        self.callbacks.listening_for_events();
-        if let Some(ref path) = watcher_data.paths.process_state.real_file {
-            self.callbacks.file_appeared(path);
-        }
-        self.watcher_event_loop(watcher_data);
-        self.callbacks.stopped_listening();
-        Ok(())
-    }
-
-    // create_watcher_data creates a watcher and runs it on the configured directories.
-    fn create_watcher_data<W: Watcher>(&mut self) -> Result<WatcherData<W>> {
-        let (mut w, rx) = match self.create_watcher::<W>() {
-            Ok((w, rx)) => (w, rx),
-            Err(err) => return Err(err),
-        };
-
-        // Initialize the Paths struct, which will hold all state relative to file watching.
-        let mut paths = Paths::new(&self.dir_file_name.as_path());
-
-        // Generate list of paths to watch.
-        let directories = paths.generate_watch_paths();
-
-        // Start watcher on each path.
-        for directory in directories {
-            if let Err(err) = w.watch(&directory, RecursiveMode::NonRecursive) {
-                // TODO: use callback to ask whether to try again or
-                // bail out.
-                //
-                // TODO: Probably the error callback should return an
-                // enum like TryAgain, StartFromScratch, BailOut
-                return Err(sup_error!(Error::NotifyError(err)));
-            }
-        }
-        Ok(WatcherData::<W> {
-            watcher: w,
-            rx: rx,
-            paths: paths,
-        })
-    }
-
-    // create_watcher initializes a watcher.
-    // It returns a watcher and a receiver side of a channel through which events are sent.
-    // The watcher is a delayed watcher, which means that events will not be delivered instantly,
-    // but after the delay has expired. This allows it to only receive complete events, at the cost
-    // of being less responsive.
-    fn create_watcher<W: Watcher>(&mut self) -> Result<(W, Receiver<DebouncedEvent>)> {
         loop {
-            let (tx, rx) = channel();
-            match W::new(tx, Duration::from_millis(WATCHER_DELAY_MS)) {
-                Ok(w) => return Ok((w, rx)),
-                Err(err) => {
-                    let sup_err = sup_error!(Error::NotifyError(err));
-                    if self.callbacks.error(&sup_err) {
-                        continue;
-                    }
-                    return Err(sup_err);
-                }
-            };
+            self.single_iteration()?;
         }
     }
 
-    fn watcher_event_loop<W: Watcher>(&mut self, mut watcher_data: WatcherData<W>) {
-        while let Ok(event) = watcher_data.rx.recv() {
-            debug!("event: {:?}", event);
-            self.handle_event(&mut watcher_data, event);
-            if !self.callbacks.continue_looping() {
-                break;
-            }
+    pub fn single_iteration(&mut self) -> Result<()> {
+        if let Some(ref real_file) = self.initial_real_file {
+            self.callbacks.file_appeared(real_file);
         }
-        // TODO: handle the error?
+        self.initial_real_file = None;
+        self.rx
+            .recv()
+            .map_err(|e| sup_error!(Error::RecvError(e)))
+            .and_then(|event| self.handle_event(event))
     }
 
     // TODO(asymmetric): does self need to be mut?
     //
     // Yes, we pass its members around as mutable refs.
-    fn handle_event<W: Watcher>(
-        &mut self,
-        watcher_data: &mut WatcherData<W>,
-        event: DebouncedEvent,
-    ) -> bool {
-        let paths = &mut watcher_data.paths;
-        let watcher = &mut watcher_data.watcher;
+    fn handle_event(&mut self, event: DebouncedEvent) -> Result<()> {
         let mut actions = VecDeque::new();
 
         // Gather the high-level actions.
-        actions.extend(Self::get_paths_actions(paths, event));
+        actions.extend(Self::get_paths_actions(&self.paths, event));
 
         debug!("in handle_event fn");
-        debug!("paths: {:?}", paths);
+        debug!("paths: {:?}", self.paths);
         debug!("actions: {:?}", actions);
         // Perform lower-level actions.
         while let Some(action) = actions.pop_front() {
@@ -998,55 +962,68 @@ impl<C: Callbacks> FileWatcher<C> {
                     self.callbacks.file_disappeared(p.as_path());
                 }
                 PathsAction::DropWatch(p) => {
-                    if let Some(dir_path) = paths.drop_watch(&p) {
-                        // TODO: Handle error.
-                        watcher.unwatch(dir_path);
+                    if let Some(dir_path) = self.paths.drop_watch(&p) {
+                        match self.watcher.unwatch(dir_path) {
+                            Ok(_) => (),
+                            // These probably may happen when the
+                            // directory was removed. Ignore them, as
+                            // we wanted to drop the watch anyway.
+                            Err(notify::Error::PathNotFound) |
+                            Err(notify::Error::WatchNotFound) => (),
+                            Err(e) => return Err(sup_error!(Error::NotifyError(e))),
+                        }
                     }
                 }
                 PathsAction::AddPathToSettle(p) => {
-                    paths.add_path_to_settle(p);
+                    self.paths.add_path_to_settle(p);
                 }
                 PathsAction::SettlePath(p) => {
-                    paths.settle_path(p);
-                    actions.extend(Self::handle_process_path(paths, watcher));
+                    self.paths.settle_path(p);
+                    actions.extend(self.handle_process_path()?);
                 }
                 PathsAction::ProcessPathAfterSettle(args) => {
-                    paths.set_process_args(args);
-                    actions.extend(Self::handle_process_path(paths, watcher));
+                    self.paths.set_process_args(args);
+                    actions.extend(self.handle_process_path()?);
                 }
                 PathsAction::RestartWatching => {
                     actions.clear();
-                    if let Some(ref path) = paths.process_state.real_file {
+                    if let Some(ref path) = self.paths.process_state.real_file {
                         actions.push_back(PathsAction::NotifyFileDisappeared(path.clone()));
                     }
-                    for directory in paths.reset() {
-                        // TODO: Handle error.
-                        watcher.unwatch(&directory);
+                    for directory in self.paths.reset() {
+                        match self.watcher.unwatch(directory) {
+                            Ok(_) => (),
+                            // These probably may happen when the
+                            // directory was removed. Ignore them, as
+                            // we wanted to drop the watch anyway.
+                            Err(notify::Error::PathNotFound) |
+                            Err(notify::Error::WatchNotFound) => (),
+                            Err(e) => return Err(sup_error!(Error::NotifyError(e))),
+                        }
                     }
-                    let process_args = Paths::path_for_processing(&paths.process_state.start_path);
+                    let process_args =
+                        Paths::path_for_processing(&self.paths.process_state.start_path);
                     actions.push_back(PathsAction::ProcessPathAfterSettle(process_args));
                 }
             }
         }
-        false
+        Ok(())
     }
 
-    fn handle_process_path<W: Watcher>(paths: &mut Paths, watcher: &mut W) -> Vec<PathsAction> {
+    fn handle_process_path(&mut self) -> Result<Vec<PathsAction>> {
         let mut actions = Vec::new();
-        match paths.process_path_or_defer_if_unsettled() {
+        match self.paths.process_path_or_defer_if_unsettled() {
             None => (),
             Some(directories) => {
                 for directory in directories {
-                    if let Err(_) = watcher.watch(&directory, RecursiveMode::NonRecursive) {
-                        // TODO: send some error
-                    }
+                    self.watcher.watch(&directory, RecursiveMode::NonRecursive)?;
                 }
-                if let Some(ref path) = paths.process_state.real_file {
+                if let Some(ref path) = self.paths.process_state.real_file {
                     actions.push(PathsAction::NotifyFileAppeared(path.clone()));
                 }
             }
         }
-        actions
+        Ok(actions)
     }
 
     // Maps `EventAction`s to one or more lower-level `PathsAction`s .
@@ -1236,10 +1213,9 @@ mod tests {
     use std::os::unix::fs::symlink;
     use std::path::Path;
 
-    use error::SupError;
     use tempdir::TempDir;
 
-    use super::{Callbacks, FileWatcher};
+    use super::{Callbacks, default_file_watcher};
 
 
     struct TestCallbacks {
@@ -1255,7 +1231,7 @@ mod tests {
     const DISAPPEARED_EVENTS_THRESHOLD: i32 = 1;
 
     impl Callbacks for TestCallbacks {
-        fn file_appeared(&mut self, real_path: &Path) {
+        fn file_appeared(&mut self, _: &Path) {
             self.appeared_events += 1;
 
             if self.appeared_events == 1 {
@@ -1291,19 +1267,6 @@ mod tests {
         fn file_disappeared(&mut self, real_path: &Path) {
             debug!("file {:?} disappeared!", real_path);
             self.disappeared_events += 1;
-        }
-        fn listening_for_events(&mut self) {
-            debug!("listening for events!");
-        }
-        fn stopped_listening(&mut self) {
-            debug!("stopped listening!");
-        }
-        fn error(&mut self, _: &SupError) -> bool {
-            true
-        }
-
-        fn continue_looping(&mut self) -> bool {
-            self.appeared_events < APPEARED_EVENTS_THRESHOLD
         }
     }
 
@@ -1346,8 +1309,10 @@ mod tests {
             disappeared_events: 0,
             temp_dir: temp_dir,
         };
-        let mut fw = FileWatcher::new(&file_symlink_dest, cb).expect("creating file watcher");
-        fw.run().expect("running file watcher");
+        let mut fw = default_file_watcher(&file_symlink_dest, cb).expect("creating file watcher");
+        while fw.get_callbacks().appeared_events < APPEARED_EVENTS_THRESHOLD {
+            fw.single_iteration().expect("iteration succeeds");
+        }
 
         // Remove old timestamped dir.
         fs::remove_dir_all(timestamped_dir).unwrap();
