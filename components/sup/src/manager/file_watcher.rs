@@ -821,7 +821,8 @@ impl<C: Callbacks> FileWatcher<C> {
         })
     }
 
-    // create_watcher creates a watcher and returns events in an infinite loop.
+    // create_watcher initializes a watcher.
+    // It returns a watcher and a receiver side of a channel through which events are sent.
     // The watcher is a delayed watcher, which means that events will not be delivered instantly,
     // but after the delay has expired. This allows it to only receive complete events, at the cost
     // of being less responsive.
