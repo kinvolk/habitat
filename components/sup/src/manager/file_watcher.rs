@@ -1109,7 +1109,7 @@ impl<C: Callbacks> FileWatcher<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::env::current_dir;
     use std::fs;
     use std::fs::{DirBuilder, File};
     use std::os::unix::fs::symlink;
@@ -1171,7 +1171,7 @@ mod tests {
         symlink(&file_symlink_path, &filename).expect("creating first file symlink");
 
         // Create file watcher.
-        let cwd = env::current_dir().unwrap();
+        let cwd = current_dir().unwrap();
         let dir_to_watch = Path::new(&cwd).join(&timestamped_dir);
         println!("watching {:?}", &dir_to_watch);
         let mut fw = FileWatcher::new(dir_to_watch, TestCallbacks).expect("creating file watcher");
