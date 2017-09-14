@@ -1097,12 +1097,39 @@ impl<C: Callbacks> FileWatcher<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::env;
     use std::fs;
     use std::fs::{DirBuilder, File};
     use std::os::unix::fs::symlink;
+    use std::path::Path;
+
+    use error::SupError;
+    use super::{Callbacks, FileWatcher};
 
     use chrono::prelude::*;
+
+    struct TestCallbacks;
+
+    impl Callbacks for TestCallbacks {
+        fn file_appeared(&mut self) {
+            println!("file appeared!");
+        }
+
+        fn file_modified(&mut self) {
+            println!("file modified!");
+        }
+
+        fn file_disappeared(&mut self) {
+            println!("file disappeared!");
+        }
+        fn listening_for_events(&mut self) {
+            println!("listening for events!");
+        }
+        fn stopped_listening(&mut self) {
+            println!("stopped listening!");
+        }
+        fn error(&mut self, _: &SupError) -> bool { true }
+    }
 
     #[test]
     #[cfg(unix)]
@@ -1131,6 +1158,13 @@ mod tests {
         let file_symlink_path = Path::new(&data_symlink_name).join(&filename);
         symlink(&file_symlink_path, &filename).expect("creating first file symlink");
 
+        // Create file watcher.
+        let cwd = env::current_dir().unwrap();
+        let dir_to_watch = Path::new(&cwd).join(&timestamped_dir);
+        println!("watching {:?}", &dir_to_watch);
+        let mut fw = FileWatcher::new(dir_to_watch, TestCallbacks).expect("creating file watcher");
+        fw.run().expect("running file watcher");
+
         // Create new timestamped directory.
         let new_ts = Local::now().to_rfc3339();
         let new_timestamped_dir = Path::new(&new_ts);
@@ -1147,7 +1181,7 @@ mod tests {
         File::create(&file_path).expect("creating peer-watch-file in new timestamped dir");
 
         // Update data to point to the new timestamped dir, using a rename which is atomic on Unix.
-        fs::rename(&temp_data_symlink_name, &data_symlink_name);
+        fs::rename(&temp_data_symlink_name, &data_symlink_name).expect("renaming symlink");
         // Remove old timestamped dir.
         fs::remove_dir_all(timestamped_dir).unwrap();
 
