@@ -803,6 +803,9 @@ impl<C: Callbacks> FileWatcher<C> {
     fn run_with<W: Watcher>(&mut self) -> Result<()> {
         let watcher_data = self.create_watcher_data::<W>()?;
         self.callbacks.listening_for_events();
+        if watcher_data.paths.process_state.file_exists {
+            self.callbacks.file_appeared();
+        }
         self.watcher_event_loop(watcher_data);
         self.callbacks.stopped_listening();
         Ok(())
