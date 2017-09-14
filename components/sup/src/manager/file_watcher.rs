@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::collections::hash_map::Entry;
 use std::ffi::OsString;
 use std::mem::swap;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
@@ -31,9 +31,9 @@ static LOGKEY: &'static str = "PW";
 pub trait Callbacks {
     fn listening_for_events(&mut self);
     fn stopped_listening(&mut self);
-    fn file_appeared(&mut self);
-    fn file_modified(&mut self);
-    fn file_disappeared(&mut self);
+    fn file_appeared(&mut self, real_path: &Path);
+    fn file_modified(&mut self, real_path: &Path);
+    fn file_disappeared(&mut self, real_path: &Path);
     fn error(&mut self, err: &SupError) -> bool;
     fn continue_looping(&mut self) -> bool;
 }
@@ -312,7 +312,7 @@ struct PathProcessState {
     // TODO: Figure out if we can perform loop detection without this
     // hash map, but only using whatever data we have in Paths.
     symlink_loop_catcher: HashMap</* symlink path: */PathBuf, /* path + path_rest */PathBuf>,
-    file_exists: bool,
+    real_file: Option<PathBuf>,
 }
 
 // TODO(asymmetric): Document the difference between PathsAction and EventAction.
@@ -320,7 +320,7 @@ struct PathProcessState {
 #[derive(Debug)]
 enum EventAction {
     Ignore,
-    PlainChange,
+    PlainChange(PathBuf),
     RestartWatching,
     AddRegular(PathsActionData),
     DropRegular(PathsActionData),
@@ -335,9 +335,9 @@ enum EventAction {
 // Lower-level actions, created to execute `EventAction`s.
 #[derive(Debug)]
 enum PathsAction {
-    NotifyFileAppeared,
-    NotifyFileModified,
-    NotifyFileDisappeared,
+    NotifyFileAppeared(PathBuf),
+    NotifyFileModified(PathBuf),
+    NotifyFileDisappeared(PathBuf),
     DropWatch(PathBuf),
     AddPathToSettle(PathBuf),
     SettlePath(PathBuf),
@@ -381,7 +381,7 @@ impl Paths {
             process_state: PathProcessState {
                 start_path: simplified_abs_path.clone(),
                 symlink_loop_catcher: HashMap::new(),
-                file_exists: false,
+                real_file: None,
             },
             paths_to_settle: HashSet::new(),
             process_args_after_settle: None,
@@ -429,7 +429,7 @@ impl Paths {
         let mut common_generator = CommonGenerator::new(args);
         let mut new_watches = Vec::new();
 
-        self.process_state.file_exists = false;
+        self.process_state.real_file = None;
 
         while let Some(common) = common_generator.get_new_common() {
             println!("common.path: {:?}", &common.path);
@@ -455,7 +455,7 @@ impl Paths {
                     if !file_type.is_symlink() {
                         if common.path_rest.is_empty() {
                             let leaf_result = if file_type.is_file() {
-                                self.process_state.file_exists = true;
+                                self.process_state.real_file = Some(common.path.clone());
                                 self.add_regular(common)
                             } else {
                                 // We probably found a directory where
@@ -804,8 +804,8 @@ impl<C: Callbacks> FileWatcher<C> {
     fn run_with<W: Watcher>(&mut self) -> Result<()> {
         let watcher_data = self.create_watcher_data::<W>()?;
         self.callbacks.listening_for_events();
-        if watcher_data.paths.process_state.file_exists {
-            self.callbacks.file_appeared();
+        if let Some(ref path) = watcher_data.paths.process_state.real_file {
+            self.callbacks.file_appeared(path);
         }
         self.watcher_event_loop(watcher_data);
         self.callbacks.stopped_listening();
@@ -899,14 +899,14 @@ impl<C: Callbacks> FileWatcher<C> {
         while let Some(action) = actions.pop_front()  {
             println!("action {:?}", action);
             match action {
-                PathsAction::NotifyFileAppeared => {
-                    self.callbacks.file_appeared();
+                PathsAction::NotifyFileAppeared(p) => {
+                    self.callbacks.file_appeared(p.as_path());
                 }
-                PathsAction::NotifyFileModified => {
-                    self.callbacks.file_modified();
+                PathsAction::NotifyFileModified(p) => {
+                    self.callbacks.file_modified(p.as_path());
                 }
-                PathsAction::NotifyFileDisappeared => {
-                    self.callbacks.file_disappeared();
+                PathsAction::NotifyFileDisappeared(p) => {
+                    self.callbacks.file_disappeared(p.as_path());
                 }
                 PathsAction::DropWatch(p) => {
                     if let Some(dir_path) = paths.drop_watch(&p) {
@@ -927,8 +927,8 @@ impl<C: Callbacks> FileWatcher<C> {
                 }
                 PathsAction::RestartWatching => {
                     actions.clear();
-                    if paths.process_state.file_exists {
-                        actions.push_back(PathsAction::NotifyFileDisappeared);
+                    if let Some(ref path) = paths.process_state.real_file {
+                        actions.push_back(PathsAction::NotifyFileDisappeared(path.clone()));
                     }
                     for directory in paths.reset() {
                         // TODO: Handle error.
@@ -956,8 +956,8 @@ impl<C: Callbacks> FileWatcher<C> {
                         // TODO: send some error
                     }
                 }
-                if paths.process_state.file_exists {
-                    actions.push(PathsAction::NotifyFileAppeared);
+                if let Some(ref path) = paths.process_state.real_file {
+                    actions.push(PathsAction::NotifyFileAppeared(path.clone()));
                 }
             }
         }
@@ -971,8 +971,8 @@ impl<C: Callbacks> FileWatcher<C> {
             println!("event_action: {:?}", event_action);
             match event_action {
                 EventAction::Ignore => (),
-                EventAction::PlainChange => {
-                    actions.push(PathsAction::NotifyFileModified);
+                EventAction::PlainChange(p) => {
+                    actions.push(PathsAction::NotifyFileModified(p));
                 }
                 EventAction::RestartWatching => {
                     actions.push(PathsAction::RestartWatching);
@@ -1023,7 +1023,9 @@ impl<C: Callbacks> FileWatcher<C> {
                 None
             };
         }
-        actions.push(PathsAction::NotifyFileDisappeared);
+        if let Some(ref path) = paths.process_state.real_file {
+            actions.push(PathsAction::NotifyFileDisappeared(path.clone()));
+        }
         actions.push(PathsAction::ProcessPathAfterSettle(pad.args));
         actions
     }
@@ -1052,7 +1054,7 @@ impl<C: Callbacks> FileWatcher<C> {
             DebouncedEvent::Write(ref p) |
             DebouncedEvent::Chmod(ref p) => {
                 match paths.get_watched_file(p) {
-                    Some(&WatchedFile::Regular(_)) => EventAction::PlainChange,
+                    Some(&WatchedFile::Regular(_)) => EventAction::PlainChange(p.clone()),
                     _ => EventAction::Ignore,
                 }
             }

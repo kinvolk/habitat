@@ -15,7 +15,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::Builder as ThreadBuilder;
@@ -40,15 +40,15 @@ impl Callbacks for PeerCallbacks {
 
     }
 
-    fn file_appeared(&mut self) {
+    fn file_appeared(&mut self, _: &Path) {
         self.have_events.store(true, Ordering::Relaxed);
     }
 
-    fn file_modified(&mut self) {
+    fn file_modified(&mut self, _: &Path) {
         self.have_events.store(true, Ordering::Relaxed)
     }
 
-    fn file_disappeared(&mut self) {
+    fn file_disappeared(&mut self, _: &Path) {
         self.have_events.store(true, Ordering::Relaxed)
     }
 
