@@ -47,7 +47,7 @@ struct DirFileName {
 pub struct FileWatcher<C: Callbacks> {
     // The directory and filename to watch
     dir_file_name: DirFileName,
-    callbacks: C,
+    pub callbacks: C,
 }
 
 impl DirFileName {
@@ -453,12 +453,10 @@ impl Paths {
                         self.add_missing_directory(common)
                     };
                     self.handle_leaf_result(leaf_result, &mut new_watches);
-                    println!("we were warrrionrs");
                     break;
                 }
                 Ok(metadata) => {
                     let file_type = metadata.file_type();
-                    println!("file_type {:?}", file_type);
                     if !file_type.is_symlink() {
                         if common.path_rest.is_empty() {
                             let leaf_result = if file_type.is_file() {
@@ -580,6 +578,7 @@ impl Paths {
         }
     }
 
+    // Checks whether the path is present in the list of watched paths.
     fn get_watched_file(&self, path: &PathBuf) -> Option<&WatchedFile> {
         self.paths.get(path)
     }
@@ -793,7 +792,6 @@ impl<C: Callbacks> FileWatcher<C> {
             p.clone()
         } else {
             let cwd = env::current_dir().map_err(|e| sup_error!(Error::Io(e)))?;
-            println!("cwd: {:?}", cwd);
             cwd.join(p)
         };
         let simplified_abs_path = simplify_abs_path(&abs_path);
@@ -875,7 +873,6 @@ impl<C: Callbacks> FileWatcher<C> {
     }
 
     fn watcher_event_loop<W: Watcher>(&mut self, mut watcher_data: WatcherData<W>) {
-        println!("in watcher_event_loop fn");
         while let Ok(event) = watcher_data.rx.recv() {
             println!("event: {:?}", event);
             self.handle_event(&mut watcher_data, event);
@@ -946,7 +943,6 @@ impl<C: Callbacks> FileWatcher<C> {
                 }
             }
         }
-        println!("at end of handle_event");
         false
     }
 
@@ -1132,6 +1128,7 @@ impl<C: Callbacks> FileWatcher<C> {
             // NoticeRemove, so this should not happen - restart
             // watching.
             Some(&WatchedFile::Symlink(_)) | Some(&WatchedFile::Directory(_)) | Some(&WatchedFile::Regular(_)) => EventAction::RestartWatching,
+            // TODO document when this can happen
             _ => EventAction::SettlePath(path),
         }
     }
@@ -1139,25 +1136,27 @@ impl<C: Callbacks> FileWatcher<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::env::current_dir;
     use std::fs;
     use std::fs::{DirBuilder, File};
     use std::os::unix::fs::symlink;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use error::SupError;
     use super::{Callbacks, FileWatcher};
 
-    use chrono::prelude::*;
-
+    #[derive(Default)]
     struct TestCallbacks {
         found_initial: bool,
         found_new_one: bool,
+        pub disappeared_events: i32,
+        pub appeared_events: i32,
     }
 
     impl Callbacks for TestCallbacks {
         fn file_appeared(&mut self, real_path: &Path) {
             println!("file {:?} appeared!", real_path);
+            self.appeared_events += 1;
+
             if self.found_initial {
                 self.found_new_one = true;
             } else {
@@ -1165,8 +1164,7 @@ mod tests {
                 let data_symlink_name = "..data";
                 let filename = "peer-watch-file";
                 // Create new timestamped directory.
-                let new_ts = Local::now().to_rfc3339();
-                let new_timestamped_dir = Path::new(&new_ts);
+                let new_timestamped_dir = Path::new("bar");
                 DirBuilder::new().create(&new_timestamped_dir).expect(
                     "creating new data dir",
                 );
@@ -1190,6 +1188,7 @@ mod tests {
 
         fn file_disappeared(&mut self, real_path: &Path) {
             println!("file {:?} disappeared!", real_path);
+            self.disappeared_events += 1;
         }
         fn listening_for_events(&mut self) {
             println!("listening for events!");
@@ -1210,8 +1209,7 @@ mod tests {
         // TODO: we could use a TempDir, but then the symlinks would not point exactly the same way
         // as in kubernetes. This is because I can't just change directory, as tests are run in
         // parallel threads.
-        let ts = Local::now().to_rfc3339();
-        let timestamped_dir = Path::new(&ts);
+        let timestamped_dir = Path::new("foo");
 
         DirBuilder::new().create(&timestamped_dir).expect(
             "creating data dir",
@@ -1219,7 +1217,7 @@ mod tests {
 
         // Create a file in the timestamped dir.
         let filename = "peer-watch-file";
-        let mut file_path = Path::new(&timestamped_dir).join(&filename);
+        let file_path = Path::new(&timestamped_dir).join(&filename);
         File::create(&file_path).expect("creating peer-watch-file");
 
         // Create a data dir as a symlink to a timestamped dir, e.g. `..data -> ..123456`.
@@ -1233,15 +1231,20 @@ mod tests {
         // Create file watcher.
         let cwd = current_dir().unwrap();
         println!("watching {:?}", &filename);
-        let mut fw = FileWatcher::new(&filename, TestCallbacks{found_initial: false, found_new_one: false}).expect("creating file watcher");
+        let cb = TestCallbacks::default();
+        let mut fw = FileWatcher::new(&filename, cb).expect("creating file watcher");
         fw.run().expect("running file watcher");
 
         // Remove old timestamped dir.
         fs::remove_dir_all(timestamped_dir).unwrap();
 
+        // The first appeared event is emitted when the watcher finds the already-existing file.
+        assert_eq!(fw.callbacks.appeared_events, 2, "appeared events");
+        assert_eq!(fw.callbacks.disappeared_events, 1, "disappeared events");
+
         // Clean up.
         fs::remove_file(data_symlink_name).unwrap();
         fs::remove_file(filename).unwrap();
-        //fs::remove_dir_all(new_timestamped_dir).unwrap();
+        fs::remove_dir_all("bar").unwrap();
     }
 }

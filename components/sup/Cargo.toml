@@ -57,7 +57,6 @@ winapi = "*"
 
 [dev-dependencies]
 hyper = "*"
-chrono = "0.4"
 
 [dev-dependencies.habitat_core]
 path = "../core"
