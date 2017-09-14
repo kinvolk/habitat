@@ -195,6 +195,10 @@ impl CommonGenerator {
 
     fn set_path(&mut self, path: PathBuf) {
         self.path = path;
+        self.split_path = SplitPath {
+            directory: self.path.clone(),
+            file_name: None,
+        };
     }
 
     fn prepend_to_path_rest(&mut self, mut path_rest: VecDeque<OsString>) {
