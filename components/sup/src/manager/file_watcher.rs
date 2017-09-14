@@ -428,6 +428,7 @@ impl Paths {
 
         while let Some(common) = common_generator.get_new_common() {
             let dir_file_name = common.dir_file_name.clone();
+            println!("dir_file_name: {:?}", dir_file_name);
 
             match common.path.symlink_metadata() {
                 Err(_) => {
@@ -438,10 +439,12 @@ impl Paths {
                         self.add_missing_directory(common)
                     };
                     self.handle_leaf_result(leaf_result, &mut new_watches);
+                    println!("we were warrrionrs");
                     break;
                 }
                 Ok(metadata) => {
                     let file_type = metadata.file_type();
+                    println!("file_type {:?}", file_type);
                     if !file_type.is_symlink() {
                         if common.path_rest.is_empty() {
                             let leaf_result = if file_type.is_file() {
@@ -773,6 +776,7 @@ impl<C: Callbacks> FileWatcher<C> {
             p.clone()
         } else {
             let cwd = env::current_dir().map_err(|e| sup_error!(Error::Io(e)))?;
+            println!("cwd: {:?}", cwd);
             cwd.join(p)
         };
         let simplified_abs_path = simplify_abs_path(&abs_path);
@@ -851,7 +855,9 @@ impl<C: Callbacks> FileWatcher<C> {
     }
 
     fn watcher_event_loop<W: Watcher>(&mut self, mut watcher_data: WatcherData<W>) {
+        println!("in watcher_event_loop fn");
         while let Ok(event) = watcher_data.rx.recv() {
+            println!("event: {:?}", event);
             self.handle_event(&mut watcher_data, event);
         }
         // TODO: handle the error?
@@ -870,8 +876,12 @@ impl<C: Callbacks> FileWatcher<C> {
         // Gather the high-level actions.
         actions.extend(Self::get_paths_actions(paths, event));
 
+        println!("in handle_event fn");
+        println!("paths: {:?}", paths);
+        println!("actions: {:?}", actions);
         // Perform lower-level actions.
         while let Some(action) = actions.pop_front()  {
+            println!("action {:?}", action);
             match action {
                 PathsAction::NotifyFileAppeared => {
                     self.callbacks.file_appeared();
@@ -913,6 +923,7 @@ impl<C: Callbacks> FileWatcher<C> {
                 }
             }
         }
+        println!("at end of handle_event");
         false
     }
 
@@ -936,6 +947,7 @@ impl<C: Callbacks> FileWatcher<C> {
     fn get_paths_actions(paths: &Paths, event: DebouncedEvent) -> Vec<PathsAction> {
         let mut actions = Vec::new();
         for event_action in Self::get_event_actions(paths, event) {
+            println!("event_action: {:?}", event_action);
             match event_action {
                 EventAction::Ignore => (),
                 EventAction::PlainChange => {
