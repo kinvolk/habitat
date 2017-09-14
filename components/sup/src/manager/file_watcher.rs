@@ -1149,8 +1149,8 @@ mod tests {
     }
 
     impl Callbacks for TestCallbacks {
-        fn file_appeared(&mut self) {
-            println!("file appeared!");
+        fn file_appeared(&mut self, real_path: &Path) {
+            println!("file {:?} appeared!", real_path);
             if self.found_initial {
                 self.found_new_one = true;
             } else {
@@ -1177,12 +1177,12 @@ mod tests {
             }
         }
 
-        fn file_modified(&mut self) {
-            println!("file modified!");
+        fn file_modified(&mut self, real_path: &Path) {
+            println!("file {:?} modified!", real_path);
         }
 
-        fn file_disappeared(&mut self) {
-            println!("file disappeared!");
+        fn file_disappeared(&mut self, real_path: &Path) {
+            println!("file {:?} disappeared!", real_path);
         }
         fn listening_for_events(&mut self) {
             println!("listening for events!");
