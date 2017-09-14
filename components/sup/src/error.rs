@@ -139,7 +139,6 @@ pub enum Error {
     NotifyError(notify::Error),
     NulError(ffi::NulError),
     PackageNotFound(package::PackageIdent),
-    PeerWatcherDirNotFound,
     Permissions(String),
     PidFileCorrupt(PathBuf),
     PidFileIO(PathBuf, io::Error),
