@@ -37,7 +37,7 @@ pub trait Callbacks {
     fn error(&mut self, err: &SupError) -> bool;
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 struct DirFileName {
     directory: PathBuf,
     file_name: OsString,
@@ -99,6 +99,7 @@ impl SplitPath {
 }
 
 // TODO(asymmetric): document this
+#[derive(Debug)]
 struct ProcessPathArgs {
     path: PathBuf,
     path_rest: VecDeque<OsString>,
@@ -111,11 +112,13 @@ struct ChainLinkInfo {
     prev: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 struct PathsActionData {
     dir_file_name: DirFileName,
     args: ProcessPathArgs,
 }
 
+#[derive(Debug)]
 struct Common {
     path: PathBuf,
     dir_file_name: DirFileName,
@@ -229,6 +232,7 @@ impl CommonGenerator {
     }
 }
 
+#[derive(Debug)]
 enum WatchedFile {
     Regular(Common),
     MissingRegular(Common),
@@ -296,6 +300,7 @@ fn simplify_abs_path(abs_path: &PathBuf) -> PathBuf {
 }
 
 // TODO(asymmetric): what is this?
+#[derive(Debug)]
 struct PathProcessState {
     // start_path is the place in the filesystem tree where watching starts.
     start_path: PathBuf,
@@ -307,6 +312,7 @@ struct PathProcessState {
 
 // TODO(asymmetric): Document the difference between PathsAction and EventAction.
 // EventActions are high-level actions to be performed in response to filesystem events.
+#[derive(Debug)]
 enum EventAction {
     Ignore,
     PlainChange,
@@ -322,6 +328,7 @@ enum EventAction {
 
 
 // Lower-level actions, created to execute `EventAction`s.
+#[derive(Debug)]
 enum PathsAction {
     NotifyFileAppeared,
     NotifyFileModified,
@@ -334,6 +341,7 @@ enum PathsAction {
 }
 
 // Paths holds the state with regards to watching.
+#[derive(Debug)]
 struct Paths {
     // TODO(asymmetric): why do we need paths and dirs?
     paths: HashMap<PathBuf, WatchedFile>,
@@ -1098,7 +1106,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-        // Implements the steps defined in https://git.io/v5Mz1#L85-L121
+    // Implements the steps defined in https://git.io/v5Mz1#L85-L121
     fn k8s_behaviour() {
         // TODO: we could use a TempDir, but then the symlinks would not point exactly the same way
         // as in kubernetes. This is because I can't just change directory, as tests are run in
