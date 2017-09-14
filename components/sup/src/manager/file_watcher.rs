@@ -724,15 +724,15 @@ impl Paths {
         }
     }
 
-    fn process_path_or_defer_if_unsettled(&mut self) -> Vec<PathBuf> {
+    fn process_path_or_defer_if_unsettled(&mut self) -> Option<Vec<PathBuf>> {
         let mut process_args = None;
         swap(&mut process_args, &mut self.process_args_after_settle);
         let (directories, new_args) = match process_args {
             Some(args) => match self.process_path_if_settled(args) {
-                ProcessPathStatus::Executed(v) => (v, None),
-                ProcessPathStatus::NotExecuted(a) => (Vec::new(), Some(a)),
+                ProcessPathStatus::Executed(v) => (Some(v), None),
+                ProcessPathStatus::NotExecuted(a) => (None, Some(a)),
             },
-            None => (Vec::new(), None)
+            None => (None, None)
         };
         self.process_args_after_settle = new_args;
         directories
@@ -941,16 +941,21 @@ impl<C: Callbacks> FileWatcher<C> {
 
     fn handle_process_path<W: Watcher>(paths: &mut Paths, watcher: &mut W) -> Vec<PathsAction> {
         let mut actions = Vec::new();
-        for directory in paths.process_path_or_defer_if_unsettled() {
-            if let Err(_) = watcher.watch(
-                &directory,
-                RecursiveMode::NonRecursive,
-            ) {
-                // TODO: send some error
+        match paths.process_path_or_defer_if_unsettled() {
+            None => (),
+            Some(directories) => {
+                for directory in directories {
+                    if let Err(_) = watcher.watch(
+                        &directory,
+                        RecursiveMode::NonRecursive,
+                    ) {
+                        // TODO: send some error
+                    }
+                }
+                if paths.process_state.file_exists {
+                    actions.push(PathsAction::NotifyFileAppeared);
+                }
             }
-        }
-        if paths.process_state.file_exists {
-            actions.push(PathsAction::NotifyFileAppeared);
         }
         actions
     }
