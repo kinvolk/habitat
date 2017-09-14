@@ -427,6 +427,8 @@ impl Paths {
         self.process_state.file_exists = false;
 
         while let Some(common) = common_generator.get_new_common() {
+            println!("common.path: {:?}", &common.path);
+            println!("common.path_rest: {:?}", &common.path_rest);
             let dir_file_name = common.dir_file_name.clone();
             println!("dir_file_name: {:?}", dir_file_name);
 
@@ -490,12 +492,15 @@ impl Paths {
                     break;
                 }
             };
+            println!("target: {:?}", &target);
             let target_path = if target.is_absolute() {
                 target
             } else {
+                println!("directory for target: {:?}", &dir_file_name.directory);
                 dir_file_name.directory.join(target)
             };
             let simplified_target = simplify_abs_path(&target_path);
+            println!("simplified target: {:?}", &simplified_target);
             let process_args = Self::path_for_processing(&simplified_target);
             if self.symlink_loop(
                 &common.path,
