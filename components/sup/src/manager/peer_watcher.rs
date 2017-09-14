@@ -55,6 +55,10 @@ impl Callbacks for PeerCallbacks {
     fn error(&mut self, _: &SupError) -> bool {
         true
     }
+
+    fn continue_looping(&mut self) -> bool {
+        true
+    }
 }
 
 pub struct PeerWatcher {

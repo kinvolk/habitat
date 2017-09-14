@@ -35,6 +35,7 @@ pub trait Callbacks {
     fn file_modified(&mut self);
     fn file_disappeared(&mut self);
     fn error(&mut self, err: &SupError) -> bool;
+    fn continue_looping(&mut self) -> bool;
 }
 
 #[derive(Clone, Debug, Default)]
@@ -871,6 +872,9 @@ impl<C: Callbacks> FileWatcher<C> {
         while let Ok(event) = watcher_data.rx.recv() {
             println!("event: {:?}", event);
             self.handle_event(&mut watcher_data, event);
+            if !self.callbacks.continue_looping() {
+                break
+            }
         }
         // TODO: handle the error?
     }
@@ -1138,14 +1142,15 @@ mod tests {
     use chrono::prelude::*;
 
     struct TestCallbacks {
-        found_initial: bool
+        found_initial: bool,
+        found_new_one: bool,
     }
 
     impl Callbacks for TestCallbacks {
         fn file_appeared(&mut self) {
             println!("file appeared!");
             if self.found_initial {
-                // TODO: Alright, cool, now what?
+                self.found_new_one = true;
             } else {
                 self.found_initial = true;
                 let data_symlink_name = "..data";
@@ -1184,6 +1189,9 @@ mod tests {
             println!("stopped listening!");
         }
         fn error(&mut self, _: &SupError) -> bool { true }
+        fn continue_looping(&mut self) -> bool {
+            !self.found_new_one
+        }
     }
 
     #[test]
@@ -1217,7 +1225,7 @@ mod tests {
         let cwd = current_dir().unwrap();
         let dir_to_watch = Path::new(&cwd).join(&timestamped_dir);
         println!("watching {:?}", &filename);
-        let mut fw = FileWatcher::new(PathBuf::from(filename), TestCallbacks{found_initial: false}).expect("creating file watcher");
+        let mut fw = FileWatcher::new(PathBuf::from(filename), TestCallbacks{found_initial: false, found_new_one: false}).expect("creating file watcher");
         fw.run().expect("running file watcher");
 
         // Remove old timestamped dir.
