@@ -79,6 +79,7 @@ impl DirFileName {
 // the directories we are interested in and compare it to the current
 // status in mountinfo, when some change there happens.
 
+#[derive(Debug)]
 struct SplitPath {
     directory: PathBuf,
     file_name: Option<OsString>,
@@ -108,6 +109,7 @@ struct ProcessPathArgs {
     prev: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 struct ChainLinkInfo {
     path: PathBuf,
     prev: Option<PathBuf>,
@@ -357,17 +359,22 @@ struct Paths {
     process_args_after_settle: Option<ProcessPathArgs>,
 }
 
+// TODO this could be rename to BranchStatus
+#[derive(Debug)]
 enum BranchResult {
     AlreadyExists,
     NewInOldDirectory(ChainLinkInfo),
     NewInNewDirectory(ChainLinkInfo, PathBuf),
 }
 
+#[derive(Debug)]
+// TODO document this.
 enum LeafResult {
     NewInOldDirectory(ChainLinkInfo),
     NewInNewDirectory(ChainLinkInfo, PathBuf),
 }
 
+#[derive(Debug)]
 enum ProcessPathStatus {
     Executed(Vec<PathBuf>),
     NotExecuted(ProcessPathArgs),
