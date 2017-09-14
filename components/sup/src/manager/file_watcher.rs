@@ -1118,7 +1118,7 @@ mod tests {
     use std::fs;
     use std::fs::{DirBuilder, File};
     use std::os::unix::fs::symlink;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use error::SupError;
     use super::{Callbacks, FileWatcher};
@@ -1178,8 +1178,8 @@ mod tests {
         // Create file watcher.
         let cwd = current_dir().unwrap();
         let dir_to_watch = Path::new(&cwd).join(&timestamped_dir);
-        println!("watching {:?}", &dir_to_watch);
-        let mut fw = FileWatcher::new(dir_to_watch, TestCallbacks).expect("creating file watcher");
+        println!("watching {:?}", &filename);
+        let mut fw = FileWatcher::new(PathBuf::from(filename), TestCallbacks).expect("creating file watcher");
         fw.run().expect("running file watcher");
 
         // Create new timestamped directory.
