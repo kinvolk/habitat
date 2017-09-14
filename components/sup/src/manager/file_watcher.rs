@@ -1232,9 +1232,8 @@ mod tests {
 
         // Create file watcher.
         let cwd = current_dir().unwrap();
-        let dir_to_watch = Path::new(&cwd).join(&timestamped_dir);
         println!("watching {:?}", &filename);
-        let mut fw = FileWatcher::new(PathBuf::from(filename), TestCallbacks{found_initial: false, found_new_one: false}).expect("creating file watcher");
+        let mut fw = FileWatcher::new(&filename, TestCallbacks{found_initial: false, found_new_one: false}).expect("creating file watcher");
         fw.run().expect("running file watcher");
 
         // Remove old timestamped dir.
