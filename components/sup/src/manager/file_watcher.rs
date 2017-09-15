@@ -1150,14 +1150,15 @@ mod tests {
         pub appeared_events: i32,
     }
 
+    const filename: &str = "peer-watch-file";
+    const data_symlink_name: &str = "..data";
+
     impl Callbacks for TestCallbacks {
         fn file_appeared(&mut self, real_path: &Path) {
             println!("file {:?} appeared!", real_path);
             self.appeared_events += 1;
 
             if self.appeared_events == 1 {
-                let data_symlink_name = "..data";
-                let filename = "peer-watch-file";
                 // Create new timestamped directory.
                 let new_timestamped_dir = Path::new("bar");
                 DirBuilder::new().create(&new_timestamped_dir).expect(
@@ -1212,12 +1213,10 @@ mod tests {
         );
 
         // Create a file in the timestamped dir.
-        let filename = "peer-watch-file";
         let file_path = Path::new(&timestamped_dir).join(&filename);
         File::create(&file_path).expect("creating peer-watch-file");
 
         // Create a data dir as a symlink to a timestamped dir, e.g. `..data -> ..123456`.
-        let data_symlink_name = "..data";
         symlink(&timestamped_dir, data_symlink_name).expect("creating data dir symlink");
 
         // Create a relative symlink to the file, i.e. `peer-watch-file -> ..data/peer-watch-file`.
