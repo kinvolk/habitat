@@ -877,7 +877,7 @@ impl<C: Callbacks> FileWatcher<C> {
             println!("event: {:?}", event);
             self.handle_event(&mut watcher_data, event);
             if !self.callbacks.continue_looping() {
-                break
+                break;
             }
         }
         // TODO: handle the error?
@@ -1146,8 +1146,6 @@ mod tests {
 
     #[derive(Default)]
     struct TestCallbacks {
-        found_initial: bool,
-        found_new_one: bool,
         pub disappeared_events: i32,
         pub appeared_events: i32,
     }
@@ -1157,10 +1155,7 @@ mod tests {
             println!("file {:?} appeared!", real_path);
             self.appeared_events += 1;
 
-            if self.found_initial {
-                self.found_new_one = true;
-            } else {
-                self.found_initial = true;
+            if self.appeared_events == 1 {
                 let data_symlink_name = "..data";
                 let filename = "peer-watch-file";
                 // Create new timestamped directory.
@@ -1197,8 +1192,9 @@ mod tests {
             println!("stopped listening!");
         }
         fn error(&mut self, _: &SupError) -> bool { true }
+
         fn continue_looping(&mut self) -> bool {
-            !self.found_new_one
+            self.appeared_events < 2
         }
     }
 
