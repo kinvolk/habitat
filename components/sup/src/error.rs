@@ -117,6 +117,7 @@ pub enum Error {
     EnvJoinPathsError(env::JoinPathsError),
     ExecCommandNotFound(String),
     FileNotFound(String),
+    FileWatcherFileIsRoot,
     HabitatCommon(common::Error),
     HabitatCore(hcore::Error),
     TemplateFileError(handlebars::TemplateFileError),
@@ -216,6 +217,7 @@ impl fmt::Display for SupError {
             Error::DepotClient(ref err) => format!("{}", err),
             Error::EnvJoinPathsError(ref err) => format!("{}", err),
             Error::FileNotFound(ref e) => format!("File not found at: {}", e),
+            Error::FileWatcherFileIsRoot => format!("Watched file is root"),
             Error::InvalidBinding(ref binding) => {
                 format!(
                     "Invalid binding \"{}\", must be of the form <NAME>:<SERVICE_GROUP> where \
@@ -353,6 +355,7 @@ impl error::Error for SupError {
             Error::DepotClient(ref err) => err.description(),
             Error::EnvJoinPathsError(ref err) => err.description(),
             Error::FileNotFound(_) => "File not found",
+            Error::FileWatcherFileIsRoot => "Watched file is root",
             Error::InvalidBinding(_) => "Invalid binding parameter",
             Error::InvalidBinds(_) => {
                 "Service binds detected that are neither required nor optional package binds"
