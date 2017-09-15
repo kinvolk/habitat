@@ -1224,7 +1224,6 @@ mod tests {
         symlink(&file_symlink_path, &filename).expect("creating first file symlink");
 
         // Create file watcher.
-        let cwd = current_dir().unwrap();
         println!("watching {:?}", &filename);
         let cb = TestCallbacks::default();
         let mut fw = FileWatcher::new(&filename, cb).expect("creating file watcher");
