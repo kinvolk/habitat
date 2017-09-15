@@ -38,7 +38,7 @@ pub trait Callbacks {
     fn continue_looping(&mut self) -> bool;
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 struct DirFileName {
     directory: PathBuf,
     file_name: OsString,
@@ -79,6 +79,7 @@ impl DirFileName {
 // the directories we are interested in and compare it to the current
 // status in mountinfo, when some change there happens.
 
+#[derive(Debug)]
 struct SplitPath {
     directory: PathBuf,
     file_name: Option<OsString>,
@@ -100,6 +101,7 @@ impl SplitPath {
 }
 
 // TODO(asymmetric): document this
+#[derive(Debug)]
 struct ProcessPathArgs {
     path: PathBuf,
     path_rest: VecDeque<OsString>,
@@ -107,16 +109,19 @@ struct ProcessPathArgs {
     prev: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 struct ChainLinkInfo {
     path: PathBuf,
     prev: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 struct PathsActionData {
     dir_file_name: DirFileName,
     args: ProcessPathArgs,
 }
 
+#[derive(Debug)]
 struct Common {
     path: PathBuf,
     dir_file_name: DirFileName,
@@ -234,6 +239,7 @@ impl CommonGenerator {
     }
 }
 
+#[derive(Debug)]
 enum WatchedFile {
     Regular(Common),
     MissingRegular(Common),
@@ -301,6 +307,7 @@ fn simplify_abs_path(abs_path: &PathBuf) -> PathBuf {
 }
 
 // TODO(asymmetric): what is this?
+#[derive(Debug)]
 struct PathProcessState {
     // start_path is the place in the filesystem tree where watching starts.
     start_path: PathBuf,
@@ -312,6 +319,7 @@ struct PathProcessState {
 
 // TODO(asymmetric): Document the difference between PathsAction and EventAction.
 // EventActions are high-level actions to be performed in response to filesystem events.
+#[derive(Debug)]
 enum EventAction {
     Ignore,
     PlainChange(PathBuf),
@@ -327,6 +335,7 @@ enum EventAction {
 
 
 // Lower-level actions, created to execute `EventAction`s.
+#[derive(Debug)]
 enum PathsAction {
     NotifyFileAppeared(PathBuf),
     NotifyFileModified(PathBuf),
@@ -339,6 +348,7 @@ enum PathsAction {
 }
 
 // Paths holds the state with regards to watching.
+#[derive(Debug)]
 struct Paths {
     // TODO(asymmetric): why do we need paths and dirs?
     paths: HashMap<PathBuf, WatchedFile>,
@@ -350,6 +360,7 @@ struct Paths {
 }
 
 // TODO this could be rename to BranchStatus
+#[derive(Debug)]
 enum BranchResult {
     AlreadyExists,
     NewInOldDirectory(ChainLinkInfo),
@@ -357,11 +368,13 @@ enum BranchResult {
 }
 
 // TODO document this.
+#[derive(Debug)]
 enum LeafResult {
     NewInOldDirectory(ChainLinkInfo),
     NewInNewDirectory(ChainLinkInfo, PathBuf),
 }
 
+#[derive(Debug)]
 enum ProcessPathStatus {
     Executed(Vec<PathBuf>),
     NotExecuted(ProcessPathArgs),
@@ -426,7 +439,10 @@ impl Paths {
         self.process_state.real_file = None;
 
         while let Some(common) = common_generator.get_new_common() {
+            println!("common.path: {:?}", &common.path);
+            println!("common.path_rest: {:?}", &common.path_rest);
             let dir_file_name = common.dir_file_name.clone();
+            println!("dir_file_name: {:?}", dir_file_name);
 
             match common.path.symlink_metadata() {
                 Err(_) => {
@@ -486,12 +502,15 @@ impl Paths {
                     break;
                 }
             };
+            println!("target: {:?}", &target);
             let target_path = if target.is_absolute() {
                 target
             } else {
+                println!("directory for target: {:?}", &dir_file_name.directory);
                 dir_file_name.directory.join(target)
             };
             let simplified_target = simplify_abs_path(&target_path);
+            println!("simplified target: {:?}", &simplified_target);
             let process_args = Self::path_for_processing(&simplified_target);
             if self.symlink_loop(
                 &common.path,
@@ -855,6 +874,7 @@ impl<C: Callbacks> FileWatcher<C> {
 
     fn watcher_event_loop<W: Watcher>(&mut self, mut watcher_data: WatcherData<W>) {
         while let Ok(event) = watcher_data.rx.recv() {
+            println!("event: {:?}", event);
             self.handle_event(&mut watcher_data, event);
             if !self.callbacks.continue_looping() {
                 break;
@@ -876,8 +896,12 @@ impl<C: Callbacks> FileWatcher<C> {
         // Gather the high-level actions.
         actions.extend(Self::get_paths_actions(paths, event));
 
+        println!("in handle_event fn");
+        println!("paths: {:?}", paths);
+        println!("actions: {:?}", actions);
         // Perform lower-level actions.
         while let Some(action) = actions.pop_front()  {
+            println!("action {:?}", action);
             match action {
                 PathsAction::NotifyFileAppeared(p) => {
                     self.callbacks.file_appeared(p.as_path());
@@ -947,6 +971,7 @@ impl<C: Callbacks> FileWatcher<C> {
     fn get_paths_actions(paths: &Paths, event: DebouncedEvent) -> Vec<PathsAction> {
         let mut actions = Vec::new();
         for event_action in Self::get_event_actions(paths, event) {
+            println!("event_action: {:?}", event_action);
             match event_action {
                 EventAction::Ignore => (),
                 EventAction::PlainChange(p) => {
