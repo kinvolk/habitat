@@ -868,7 +868,6 @@ impl<C: Callbacks> FileWatcher<C> {
 
     fn watcher_event_loop<W: Watcher>(&mut self, mut watcher_data: WatcherData<W>) {
         while let Ok(event) = watcher_data.rx.recv() {
-            println!("event: {:?}", event);
             self.handle_event(&mut watcher_data, event);
             if !self.callbacks.continue_looping() {
                 break;
@@ -890,10 +889,8 @@ impl<C: Callbacks> FileWatcher<C> {
         // Gather the high-level actions.
         actions.extend(Self::get_paths_actions(paths, event));
 
-        println!("actions: {:?}", actions);
         // Perform lower-level actions.
         while let Some(action) = actions.pop_front()  {
-            println!("action {:?}", action);
             match action {
                 PathsAction::NotifyFileAppeared(p) => {
                     self.callbacks.file_appeared(p.as_path());
@@ -963,7 +960,6 @@ impl<C: Callbacks> FileWatcher<C> {
     fn get_paths_actions(paths: &Paths, event: DebouncedEvent) -> Vec<PathsAction> {
         let mut actions = Vec::new();
         for event_action in Self::get_event_actions(paths, event) {
-            println!("event_action: {:?}", event_action);
             match event_action {
                 EventAction::Ignore => (),
                 EventAction::PlainChange(p) => {
@@ -1155,14 +1151,13 @@ mod tests {
 
     impl Callbacks for TestCallbacks {
         fn file_appeared(&mut self, real_path: &Path) {
-            println!("file {:?} appeared!", real_path);
             self.appeared_events += 1;
 
             if self.appeared_events == 1 {
                 // Create new timestamped directory.
                 let new_timestamped_dir = self.temp_dir.path().join("bar");
                 DirBuilder::new().create(&new_timestamped_dir).expect(
-                    "creating new data dir",
+                    "creating new timestamped dir",
                 );
 
                 // Create temp symlink for the new data dir, i.e. `..data_tmp -> bar`.
@@ -1179,18 +1174,14 @@ mod tests {
         }
 
         fn file_modified(&mut self, real_path: &Path) {
-            println!("file {:?} modified!", real_path);
         }
 
         fn file_disappeared(&mut self, real_path: &Path) {
-            println!("file {:?} disappeared!", real_path);
             self.disappeared_events += 1;
         }
         fn listening_for_events(&mut self) {
-            println!("listening for events!");
         }
         fn stopped_listening(&mut self) {
-            println!("stopped listening!");
         }
         fn error(&mut self, _: &SupError) -> bool { true }
 
@@ -1203,32 +1194,28 @@ mod tests {
     #[cfg(unix)]
     // Implements the steps defined in https://git.io/v5Mz1#L85-L121
     fn k8s_behaviour() {
-        let temp_dir = TempDir::new("filewatchertest").expect("creating timestamped dir");
+        let temp_dir = TempDir::new("filewatchertest").expect("creating temp dir");
 
         let timestamped_dir = temp_dir.path().join("foo");
 
         DirBuilder::new().create(&timestamped_dir).expect(
-            "creating new data dir",
+            "creating timestamped dir",
         );
 
         // Create a file in the timestamped dir.
         let file_path = timestamped_dir.join(&FILENAME);
-        println!("creating file in {:?}", &file_path);
         File::create(&file_path).expect("creating peer-watch-file");
 
         // Create a data dir as a symlink to a timestamped dir, i.e. `..data -> ..foo`.
         let data_dir_path = temp_dir.path().join(DATA_DIR_NAME);
-        println!("symlinking {:?} -> {:?}", &data_dir_path, &timestamped_dir);
         symlink(&timestamped_dir, &data_dir_path).expect("creating data dir symlink");
 
         // Create a relative symlink to the file, i.e. `peer-watch-file -> ..data/peer-watch-file`.
         let file_symlink_src = data_dir_path.join(&FILENAME);
         let file_symlink_dest = temp_dir.path().join(&FILENAME);
-        println!("symlinking {:?} -> {:?}", &file_symlink_dest, &file_symlink_src);
         symlink(&file_symlink_src, &file_symlink_dest).expect("creating first file symlink");
 
         // Create file watcher.
-        println!("watching {:?}", &file_path);
         let cb = TestCallbacks {
             appeared_events: 0,
             disappeared_events: 0,
