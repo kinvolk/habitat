@@ -101,31 +101,53 @@ impl SplitPath {
 }
 
 // TODO(asymmetric): document this
+//
+// contents are basically for the process_path function
 #[derive(Debug)]
 struct ProcessPathArgs {
+    // the beginning of the patch to process (very often it is root,
+    // but not always)
     path: PathBuf,
+    // the rest of the path as components ([habitat-operator, peers])
     path_rest: VecDeque<OsString>,
+    // nevermind, I still need to see if I can get this thing removed
+    //
+    // basically describes the position in the index, used for
+    // determining from where we should start reprocessing the path in
+    // case of some events.
     index: u32,
+    // previous path in chain, usually a parent directory, but in case
+    // of symlinks it becomes complicated
+    //
+    // what I call chain here is a list of item we end up watching.
+    // (item - directory, file or symlink)
     prev: Option<PathBuf>,
 }
 
 #[derive(Debug)]
+// this struct basically tells that for path the previous item in
+// chain is prev.
 struct ChainLinkInfo {
     path: PathBuf,
     prev: Option<PathBuf>,
 }
 
 #[derive(Debug)]
+// a struct that gets passed together with some event actions
 struct PathsActionData {
     dir_file_name: DirFileName,
     args: ProcessPathArgs,
 }
 
 #[derive(Debug)]
+// this is stores information about the watched item
 struct Common {
+    // TODO: maybe drop this? we could also use dir_file_name.as_path()
     path: PathBuf,
     dir_file_name: DirFileName,
+    // previous watched item in chain, is None for the first watched item
     prev: Option<PathBuf>,
+    // next watched item in chain, is None for the last watched item
     next: Option<PathBuf>,
     // TODO: That was needed to make sure that the generated process
     // args with lower index will overwrite the generated process args
@@ -135,6 +157,10 @@ struct Common {
     // watches, so the most recent removal event should happen for the
     // element in chain with lowest index.
     index: u32,
+    // this is the rest of the components that were left to process at
+    // the moment we were processing this path. useful for
+    // reprocessing the path, when the next item in the list was
+    // removed/replaced.
     path_rest: VecDeque<OsString>,
 }
 
@@ -167,12 +193,29 @@ impl Common {
 }
 
 // TODO(asymmetric): document
+//
+// This is only used to generate the Common struct for each item we
+// have in the path, so for /h-o/peers, it will generate data for /h-o
+// and for /h-o/peers.
 struct CommonGenerator {
+    // What was the last item we processed, complicated in case of
+    // symlinks.
     prev: Option<PathBuf>,
+    // Normally prev is just a parent directory (previous processed
+    // item), but this is not the case when we are dealing with
+    // symlinks. keep_prev is used then to avoid setting prev to the
+    // previous processed item.
     keep_prev: bool,
+    // the path for the generated Common
+    //
+    // TODO(krnowak): drop it? we likely have this information stored
+    // in split_path, we could add a as_path() function to SplitPath.
     path: PathBuf,
+    // Same as path, but splitted into dirname and basename
     split_path: SplitPath,
+    // nevermind, hopefully to be dropped
     index: u32,
+    // the rest of the path as components to be processed
     path_rest: VecDeque<OsString>,
 }
 
@@ -215,6 +258,19 @@ impl CommonGenerator {
             let prev = self.prev.clone();
 
             // TODO(asymmetric): what is going on here?
+            //
+            // This is only used for symlinks. We want to make sure
+            // that the previous item for the symlink's target is
+            // either the symlink or target's parent directory if we
+            // didn't watch the directory before.
+            //
+            // an example - we watch /a/b/c, c is a symlink to /a/x/c,
+            // so after processing /a/b/c we want to have a chain like
+            // /a, /a/b, /a/x, /a/x/c.
+            //
+            // so we use keep_prev to make sure that the proper
+            // previous item in chain will be set for the paths coming
+            // after following the symlink
             if self.keep_prev {
                 self.keep_prev = false;
             } else {
@@ -309,6 +365,7 @@ fn simplify_abs_path(abs_path: &PathBuf) -> PathBuf {
 }
 
 // TODO(asymmetric): what is this?
+// TODO(krnowak): this probably should just be merged into Paths
 #[derive(Debug)]
 struct PathProcessState {
     // start_path is the place in the filesystem tree where watching starts.
@@ -325,7 +382,11 @@ struct PathProcessState {
 }
 
 // TODO(asymmetric): Document the difference between PathsAction and EventAction.
+//
 // EventActions are high-level actions to be performed in response to filesystem events.
+//
+// Basically we translate DebouncedEvent to EventAction, and
+// EventAction to a list of PathsActions
 #[derive(Debug)]
 enum EventAction {
     Ignore,
@@ -358,6 +419,15 @@ enum PathsAction {
 #[derive(Debug)]
 struct Paths {
     // TODO(asymmetric): why do we need paths and dirs?
+    //
+    // "paths" is what we are interested in: directories, symlinks,
+    // files. If something happen to them, we react. "dirs" on the
+    // other hand is a map of directories to use count we actually
+    // watch with the os specific watcher. Usually these are parent
+    // directories of the items in "paths". Use count can be greater
+    // than 1 in case of symlinks (watch /a, which points to b, so we
+    // end up with two paths, but only one directory to watch with use
+    // count 2)
     paths: HashMap<PathBuf, WatchedFile>,
     dirs: HashMap<
         /*watched directory: */
@@ -368,10 +438,17 @@ struct Paths {
     process_state: PathProcessState,
     // Filled in notice remove, drained in remove and rename.
     paths_to_settle: HashSet<PathBuf>,
+    // these args are used to pass them to process args, when
+    // paths_to_settle becomes empty
     process_args_after_settle: Option<ProcessPathArgs>,
 }
 
 // TODO this could be rename to BranchStatus
+//
+// Both branch result and leaf result are about the status of adding
+// new path to be watched. Branch is about symlinks and directories,
+// leaves - about regular files, missing regular files and missing
+// directories.
 #[derive(Debug)]
 enum BranchResult {
     AlreadyExists,
@@ -387,7 +464,10 @@ enum LeafResult {
 }
 
 #[derive(Debug)]
+// we use this when we settle a path, so we know if we processed a
+// path, because all the path were already settled.
 enum ProcessPathStatus {
+    // Holds a vector of new directories to watch (a result of process_path function)
     Executed(Vec<PathBuf>),
     NotExecuted(ProcessPathArgs),
 }
@@ -603,6 +683,8 @@ impl Paths {
 
     fn drop_watch(&mut self, path: &PathBuf) -> Option<PathBuf> {
         // TODO(asymmetric): when can we get None here? Explain.
+        //
+        // We shouldn't, maybe we should warn when it happens?
         if let Some(watched_file) = self.paths.remove(path) {
             let common = watched_file.steal_common();
             let unwatch_directory;
@@ -644,20 +726,14 @@ impl Paths {
         }
     }
 
-    // Returns true, if the directory did not exist before, so it
-    // needs to be watched now.
     fn add_regular(&mut self, common: Common) -> LeafResult {
         self.add_leaf_watched_file(WatchedFile::Regular(common))
     }
 
-    // Returns true, if the directory did not exist before, so it
-    // needs to be watched now.
     fn add_missing_regular(&mut self, common: Common) -> LeafResult {
         self.add_leaf_watched_file(WatchedFile::MissingRegular(common))
     }
 
-    // Returns true, if the directory did not exist before, so it
-    // needs to be watched now.
     fn add_missing_directory(&mut self, common: Common) -> LeafResult {
         self.add_leaf_watched_file(WatchedFile::MissingDirectory(common))
     }
@@ -794,6 +870,9 @@ impl<C: Callbacks> FileWatcher<C> {
         })
     }
 
+    // turns given path to an simplified absolute path.
+    //
+    // simplified means that it is without . and ..
     fn watcher_path(p: PathBuf) -> Result<DirFileName> {
         let abs_path = if p.is_absolute() {
             p.clone()
@@ -888,6 +967,8 @@ impl<C: Callbacks> FileWatcher<C> {
     }
 
     // TODO(asymmetric): does self need to be mut?
+    //
+    // Yes, we pass its members around as mutable refs.
     fn handle_event<W: Watcher>(
         &mut self,
         watcher_data: &mut WatcherData<W>,
