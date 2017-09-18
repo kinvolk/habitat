@@ -357,23 +357,6 @@ fn simplify_abs_path(abs_path: &PathBuf) -> PathBuf {
     simple
 }
 
-// TODO(asymmetric): what is this?
-// TODO(krnowak): this probably should just be merged into Paths
-#[derive(Debug)]
-struct PathProcessState {
-    // start_path is the place in the filesystem tree where watching starts.
-    start_path: PathBuf,
-    // TODO: Figure out if we can perform loop detection without this
-    // hash map, but only using whatever data we have in Paths.
-    symlink_loop_catcher: HashMap<
-        /* symlink path: */
-        PathBuf,
-        /* path + path_rest */
-        PathBuf,
-    >,
-    real_file: Option<PathBuf>,
-}
-
 // TODO(asymmetric): Document the difference between PathsAction and EventAction.
 //
 // EventActions are high-level actions to be performed in response to filesystem events.
@@ -428,7 +411,17 @@ struct Paths {
         /* watched files count: */
         u32,
     >,
-    process_state: PathProcessState,
+    // start_path is the place in the filesystem tree where watching starts.
+    start_path: PathBuf,
+    // TODO: Figure out if we can perform loop detection without this
+    // hash map, but only using whatever data we have in Paths.
+    symlink_loop_catcher: HashMap<
+        /* symlink path: */
+        PathBuf,
+        /* path + path_rest */
+        PathBuf,
+    >,
+    real_file: Option<PathBuf>,
     // Filled in notice remove, drained in remove and rename.
     paths_to_settle: HashSet<PathBuf>,
     // these args are used to pass them to process args, when
@@ -470,11 +463,9 @@ impl Paths {
         Self {
             paths: HashMap::new(),
             dirs: HashMap::new(),
-            process_state: PathProcessState {
-                start_path: simplified_abs_path.clone(),
-                symlink_loop_catcher: HashMap::new(),
-                real_file: None,
-            },
+            start_path: simplified_abs_path.clone(),
+            symlink_loop_catcher: HashMap::new(),
+            real_file: None,
             paths_to_settle: HashSet::new(),
             process_args_after_settle: None,
         }
@@ -482,7 +473,7 @@ impl Paths {
 
     // generate_watch_paths returns a list of paths to watch, based on the configured `start_path`.
     fn generate_watch_paths(&mut self) -> Vec<PathBuf> {
-        let process_args = Self::path_for_processing(&self.process_state.start_path);
+        let process_args = Self::path_for_processing(&self.start_path);
 
         self.process_path(process_args)
     }
@@ -522,7 +513,7 @@ impl Paths {
         let mut common_generator = CommonGenerator::new(args);
         let mut new_watches = Vec::new();
 
-        self.process_state.real_file = None;
+        self.real_file = None;
 
         while let Some(common) = common_generator.get_new_common() {
             debug!("common.path: {:?}", &common.path);
@@ -546,7 +537,7 @@ impl Paths {
                     if !file_type.is_symlink() {
                         if common.path_rest.is_empty() {
                             let leaf_result = if file_type.is_file() {
-                                self.process_state.real_file = Some(common.path.clone());
+                                self.real_file = Some(common.path.clone());
                                 self.add_regular(common)
                             } else {
                                 // We probably found a directory where
@@ -689,7 +680,7 @@ impl Paths {
                 *count -= 1;
                 unwatch_directory = *count == 0;
             }
-            self.process_state.symlink_loop_catcher.remove(path);
+            self.symlink_loop_catcher.remove(path);
             if unwatch_directory {
                 self.dirs.remove(&dir_path);
                 return Some(dir_path);
@@ -710,7 +701,7 @@ impl Paths {
         merged_path_rest.extend(path_rest.iter().cloned());
         let mut merged_path = new_path.clone();
         merged_path.extend(merged_path_rest);
-        match self.process_state.symlink_loop_catcher.entry(path.clone()) {
+        match self.symlink_loop_catcher.entry(path.clone()) {
             Entry::Occupied(o) => *o.get() == merged_path,
             Entry::Vacant(v) => {
                 v.insert(merged_path);
@@ -835,7 +826,7 @@ impl Paths {
         dirs_to_unwatch.extend(self.dirs.drain().map(|i| i.0));
         self.paths_to_settle.clear();
         self.process_args_after_settle = None;
-        self.process_state.symlink_loop_catcher.clear();
+        self.symlink_loop_catcher.clear();
         dirs_to_unwatch
     }
 }
@@ -883,7 +874,7 @@ impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
                 .watch(&directory, RecursiveMode::NonRecursive)
                 .map_err(|err| sup_error!(Error::NotifyError(err)))?;
         }
-        let initial_real_file = paths.process_state.real_file.clone();
+        let initial_real_file = paths.real_file.clone();
 
         Ok(Self {
             callbacks: callbacks,
@@ -987,7 +978,7 @@ impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
                 }
                 PathsAction::RestartWatching => {
                     actions.clear();
-                    if let Some(ref path) = self.paths.process_state.real_file {
+                    if let Some(ref path) = self.paths.real_file {
                         actions.push_back(PathsAction::NotifyFileDisappeared(path.clone()));
                     }
                     for directory in self.paths.reset() {
@@ -1001,8 +992,7 @@ impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
                             Err(e) => return Err(sup_error!(Error::NotifyError(e))),
                         }
                     }
-                    let process_args =
-                        Paths::path_for_processing(&self.paths.process_state.start_path);
+                    let process_args = Paths::path_for_processing(&self.paths.start_path);
                     actions.push_back(PathsAction::ProcessPathAfterSettle(process_args));
                 }
             }
@@ -1018,7 +1008,7 @@ impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
                 for directory in directories {
                     self.watcher.watch(&directory, RecursiveMode::NonRecursive)?;
                 }
-                if let Some(ref path) = self.paths.process_state.real_file {
+                if let Some(ref path) = self.paths.real_file {
                     actions.push(PathsAction::NotifyFileAppeared(path.clone()));
                 }
             }
@@ -1085,7 +1075,7 @@ impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
                 None
             };
         }
-        if let Some(ref path) = paths.process_state.real_file {
+        if let Some(ref path) = paths.real_file {
             actions.push(PathsAction::NotifyFileDisappeared(path.clone()));
         }
         actions.push(PathsAction::ProcessPathAfterSettle(pad.args));
