@@ -282,6 +282,8 @@ impl Service {
         self.supervisor.state_entered
     }
 
+    /// Performs updates and executes hooks.
+    /// Returns true if the service was updated.
     pub fn tick(&mut self, census_ring: &CensusRing, launcher: &LauncherCli) -> bool {
         if !self.initialized {
             if !self.all_binds_satisfied(census_ring) {
@@ -409,7 +411,7 @@ impl Service {
         cfg_updated
     }
 
-    /// Replace the package of the running service and restart it's system process.
+    /// Replace the package of the running service and restart its system process.
     pub fn update_package(&mut self, package: PackageInstall, launcher: &LauncherCli) {
         match Pkg::from_install(package) {
             Ok(pkg) => {
@@ -464,7 +466,7 @@ impl Service {
         rumor
     }
 
-    /// Run initialization hook if present
+    /// Run initialization hook if present.
     fn initialize(&mut self) {
         if self.initialized {
             return;
@@ -640,13 +642,14 @@ impl Service {
             if self.needs_reload || self.process_down() || self.needs_reconfiguration {
                 self.reload(launcher);
                 if self.needs_reconfiguration {
+                    // NOTE this only runs the hook if it's defined
                     self.reconfigure()
                 }
             }
         }
     }
 
-    /// Run file_updated hook if present
+    /// Run file_updated hook if present.
     fn file_updated(&self) -> bool {
         if self.initialized {
             if let Some(ref hook) = self.hooks.file_updated {
@@ -661,6 +664,7 @@ impl Service {
     }
 
     /// Write service files from gossip data to disk.
+    /// For the location, check `svc_file_path()`.
     ///
     /// Returns true if a file was changed, added, or removed, and false if there were no updates.
     fn update_service_files(&mut self, census_ring: &CensusRing) -> bool {

@@ -270,6 +270,7 @@ impl Serialize for Cfg {
 }
 
 #[derive(Debug)]
+/// Renders configuration templates into config files.
 pub struct CfgRenderer(TemplateRenderer);
 
 impl CfgRenderer {

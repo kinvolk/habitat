@@ -621,6 +621,7 @@ impl Manager {
         }
     }
 
+    // Creates a rumor for the specified service.
     fn gossip_latest_service_rumor(&self, service: &Service) {
         let mut incarnation = 1;
         {
