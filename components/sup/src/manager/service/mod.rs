@@ -81,13 +81,13 @@ pub struct Service {
     pub pkg: Pkg,
     pub sys: Arc<Sys>,
     pub initialized: bool,
+    pub needs_reload: bool,
+    pub needs_reconfiguration: bool,
 
     #[serde(skip_serializing)]
     config_renderer: CfgRenderer,
     health_check: HealthCheck,
     last_election_status: ElectionStatus,
-    needs_reload: bool,
-    needs_reconfiguration: bool,
     smoke_check: SmokeCheck,
     binds: Vec<ServiceBind>,
     hooks: HookTable,
