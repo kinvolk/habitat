@@ -20,6 +20,7 @@ use std::thread::Builder as ThreadBuilder;
 
 use super::file_watcher::{Callbacks, default_file_watcher};
 
+use hcore::fs::USER_CONFIG_FILE;
 use hcore::service::ServiceGroup;
 use manager::service::Service;
 
@@ -68,7 +69,7 @@ impl UserConfigWatcher {
                 have_events
             },
         );
-        outputln!(preamble service.service_group(), "Watching user.toml");
+        outputln!(preamble service.service_group(), "Watching {}", USER_CONFIG_FILE);
     }
 
     pub fn have_events_for<T: Serviceable>(&self, service: &T) -> bool {
@@ -111,7 +112,7 @@ struct Worker;
 impl Worker {
     // starts a new thread with the file watcher on the service's user.toml file
     pub fn run(service_path: &Path, have_events: Arc<AtomicBool>) {
-        let path = service_path.join("user.toml");
+        let path = service_path.join(USER_CONFIG_FILE);
         Self::setup_watcher(path, have_events);
     }
 
@@ -161,7 +162,7 @@ mod tests {
         let mut ucm = UserConfigWatcher::new();
         ucm.add(&service);
 
-        File::create(service.path().join("user.toml")).expect("creating file");
+        File::create(service.path().join(USER_CONFIG_FILE)).expect("creating file");
 
         assert!(wait_for_events(&ucm, &service));
     }
@@ -169,7 +170,7 @@ mod tests {
     #[test]
     fn events_present_after_changing_config() {
         let service = TestService::default();
-        let file_path = service.path().join("user.toml");
+        let file_path = service.path().join(USER_CONFIG_FILE);
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service);
@@ -177,7 +178,7 @@ mod tests {
 
         ucm.reset_events_for(&service);
 
-        file.write_all(b"42").expect("writing to user.toml");
+        file.write_all(b"42").expect(USER_CONFIG_FILE);
 
         assert!(wait_for_events(&ucm, &service));
     }
@@ -185,7 +186,7 @@ mod tests {
     #[test]
     fn events_present_after_removing_config() {
         let service = TestService::default();
-        let file_path = service.path().join("user.toml");
+        let file_path = service.path().join(USER_CONFIG_FILE);
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service);

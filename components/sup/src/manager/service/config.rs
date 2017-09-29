@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::result;
 
 use ansi_term::Colour::Purple;
+use hcore::fs::USER_CONFIG_FILE;
 use hcore::crypto;
 use serde::{Serialize, Serializer};
 use serde::ser::SerializeMap;
@@ -145,11 +146,16 @@ impl Cfg {
     }
 
     fn load_user(&mut self, package: &Pkg) -> Result<()> {
-        let path = package.svc_path.join("user.toml");
+        let path = package.svc_path.join(USER_CONFIG_FILE);
         let mut file = match File::open(&path) {
             Ok(file) => file,
             Err(e) => {
-                debug!("Failed to open 'user.toml', {}, {}", path.display(), e);
+                debug!(
+                    "Failed to open '{}', {}, {}",
+                    USER_CONFIG_FILE,
+                    path.display(),
+                    e
+                );
                 self.user = None;
                 return Ok(());
             }
@@ -163,7 +169,12 @@ impl Cfg {
                 self.user = Some(toml::Value::Table(toml));
             }
             Err(e) => {
-                outputln!("Failed to load 'user.toml', {}, {}", path.display(), e);
+                outputln!(
+                    "Failed to load '{}', {}, {}",
+                    USER_CONFIG_FILE,
+                    path.display(),
+                    e
+                );
                 self.user = None;
             }
         }
