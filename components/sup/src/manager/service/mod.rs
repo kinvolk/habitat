@@ -499,8 +499,7 @@ impl Service {
         }
     }
 
-    /// Run reconfigure hook if present. Return false if it is not present, to trigger default
-    /// restart behavior.
+    /// Run reconfigure hook if present.
     fn reconfigure(&mut self) {
         self.needs_reconfiguration = false;
         if let Some(ref hook) = self.hooks.reconfigure {
