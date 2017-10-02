@@ -926,8 +926,7 @@ impl Manager {
             if self.user_config_watcher.have_events_for(service) {
                 outputln!("Reloading service {}", &service.spec_ident);
                 self.user_config_watcher.reset_events_for(service);
-                service.needs_reload = true;
-                service.needs_reconfiguration = true;
+                service.user_config_updated = true;
             }
         }
     }
