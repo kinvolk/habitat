@@ -72,9 +72,7 @@ impl UserConfigWatcher {
 
     pub fn have_events_for<T: Serviceable>(&self, service: &T) -> bool {
         if let Some(val) = self.states.get(service.name()) {
-            let val = val.load(Ordering::Relaxed);
-
-            val
+            val.load(Ordering::Relaxed)
         } else {
             false
         }
