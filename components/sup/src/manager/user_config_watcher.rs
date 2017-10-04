@@ -26,11 +26,11 @@ use manager::service::Service;
 
 static LOGKEY: &'static str = "UCM";
 
-// This trait exists to ease the testing of functions that receive a Service.  Creating Services
+// This trait exists to ease the testing of functions that receive a Service. Creating Services
 // requires a lot of ceremony, so we work around this with this trait.
 pub trait Serviceable {
     fn name(&self) -> &String;
-    fn path(&self) -> &PathBuf;
+    fn path(&self) -> &Path;
     fn service_group(&self) -> &ServiceGroup;
 }
 
@@ -39,7 +39,7 @@ impl Serviceable for Service {
         &self.pkg.name
     }
 
-    fn path(&self) -> &PathBuf {
+    fn path(&self) -> &Path {
         &self.pkg.svc_path
     }
 
@@ -235,7 +235,7 @@ mod tests {
 
     struct TestService {
         name: String,
-        path: PathBuf,
+        path: TempDir,
         service_group: ServiceGroup,
     }
 
@@ -244,8 +244,8 @@ mod tests {
             &self.name
         }
 
-        fn path(&self) -> &PathBuf {
-            &self.path
+        fn path(&self) -> &Path {
+            self.path.path()
         }
 
         fn service_group(&self) -> &ServiceGroup {
@@ -257,9 +257,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 name: String::from("foo"),
-                path: TempDir::new("user-config-watcher")
-                    .expect("creating temp dir")
-                    .into_path(),
+                path: TempDir::new("user-config-watcher").expect("creating temp dir"),
                 service_group: ServiceGroup::from_str("foo.bar@yoyodine").unwrap(),
             }
         }
