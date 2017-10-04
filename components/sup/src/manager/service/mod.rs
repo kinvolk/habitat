@@ -407,9 +407,7 @@ impl Service {
             }
             let (reload, reconfigure) = {
                 let ctx = self.render_context(census_ring);
-                // XXX figure out if the config gets loaded by the service without explicitly
-                // setting reload to true.
-                let reload = self.compile_hooks(&ctx); // || self.user_config_updated;
+                let reload = self.compile_hooks(&ctx) || self.user_config_updated;
                 let reconfigure = self.compile_configuration(&ctx);
                 (reload, reconfigure)
             };

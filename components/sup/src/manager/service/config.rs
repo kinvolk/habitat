@@ -146,7 +146,6 @@ impl Cfg {
     }
 
     pub fn load_user(&mut self, package: &Pkg) -> Result<()> {
-        println!("loading user.toml");
         let path = package.svc_path.join(USER_CONFIG_FILE);
         let mut file = match File::open(&path) {
             Ok(file) => file,
