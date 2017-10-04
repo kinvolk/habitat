@@ -209,7 +209,7 @@ mod tests {
         File::create(&file_path).expect("creating file");
 
         // Allow the watcher to notice that a file was created.
-        thread::sleep(Duration::from_millis(100));
+        wait_for_events(&ucm, &service);
 
         ucm.reset_events_for(&service);
 
