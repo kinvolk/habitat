@@ -427,7 +427,7 @@ impl Service {
             }
             let (reload, reconfigure) = {
                 let ctx = self.render_context(census_ring);
-                let reload = self.compile_hooks(&ctx);
+                let reload = self.compile_hooks(&ctx) || self.user_config_updated;
                 let reconfigure = self.compile_configuration(&ctx);
                 (reload, reconfigure)
             };
