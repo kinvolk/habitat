@@ -77,7 +77,6 @@ impl<'a> RenderContext<'a> {
         let census_group = census.census_group_for(&service_group).expect(
             "Census Group missing from list!",
         );
-        println!("render cfg: {:?}", &cfg);
         RenderContext {
             sys: sys,
             pkg: pkg,

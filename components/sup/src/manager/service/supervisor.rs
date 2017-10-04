@@ -165,7 +165,6 @@ impl Supervisor {
                 match launcher.restart(pid) {
                     Ok(pid) => {
                         self.pid = Some(pid);
-                        println!("new pid: {}", pid);
                         self.create_pidfile()?;
                         self.change_state(ProcessState::Up);
                         Ok(())

@@ -742,7 +742,6 @@ impl Service {
     // Returns `false` if the write fails.
     fn cache_service_file(&mut self, service_file: &ServiceFile) -> bool {
         let file = self.pkg.svc_files_path.join(&service_file.filename);
-        outputln!("writing cache file {:?}", &file);
         self.write_cache_file(file, &service_file.body)
     }
 
