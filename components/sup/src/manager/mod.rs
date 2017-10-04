@@ -318,12 +318,12 @@ impl Manager {
             launcher: launcher,
             services: services,
             spec_watcher: SpecWatcher::run(&fs_cfg.specs_path)?,
+            peer_watcher: peer_watcher,
+            user_config_watcher: UserConfigWatcher::new(),
             fs_cfg: Arc::new(fs_cfg),
             organization: cfg.organization,
             service_states: HashMap::new(),
             sys: Arc::new(sys),
-            peer_watcher: peer_watcher,
-            user_config_watcher: UserConfigWatcher::new(),
         })
     }
 
