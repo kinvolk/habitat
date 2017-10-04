@@ -125,10 +125,26 @@ impl Worker {
                     path.display()
                 );
                 let callbacks = UserConfigCallbacks { have_events: have_events };
-                let mut file_watcher =
-                    default_file_watcher(&path, callbacks).expect("creating user-config watcher");
+                let mut file_watcher = match default_file_watcher(&path, callbacks) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        outputln!(
+                            "UserConfigWatcher({}) could not start notifier, ending thread ({})",
+                            path.display(),
+                            e
+                        );
+                        return;
+                    }
+                };
 
-                file_watcher.run().expect("starting user-config watcher");
+                if let Err(e) = file_watcher.run() {
+                    outputln!(
+                        "UserConfigWatcher({}) could not run notifier, ending thread ({})",
+                        path.display(),
+                        e
+                    );
+                    return;
+                };
             })
             .expect("starting user-config-watcher worker thread");
     }
