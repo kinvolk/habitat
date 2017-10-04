@@ -50,8 +50,6 @@ impl Serviceable for Service {
 
 
 pub struct UserConfigWatcher {
-    // TODO use a HashSet? we don't really need the boolean:
-    // if the key is present, it's true, otherwise it's false.
     states: HashMap<String, Arc<AtomicBool>>,
 }
 
