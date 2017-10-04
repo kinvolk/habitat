@@ -108,7 +108,7 @@ impl Callbacks for UserConfigCallbacks {
 struct Worker;
 
 impl Worker {
-    // starts a new thread with the file watcher on the service's user.toml file
+    // starts a new thread with the file watcher tracking the service's user-config file
     pub fn run(service_path: &Path, have_events: Arc<AtomicBool>) {
         let path = service_path.join(USER_CONFIG_FILE);
         Self::setup_watcher(path, have_events);
