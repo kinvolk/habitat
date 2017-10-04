@@ -29,13 +29,13 @@ static LOGKEY: &'static str = "UCM";
 // This trait exists to ease the testing of functions that receive a Service. Creating Services
 // requires a lot of ceremony, so we work around this with this trait.
 pub trait Serviceable {
-    fn name(&self) -> &String;
+    fn name(&self) -> &str;
     fn path(&self) -> &Path;
     fn service_group(&self) -> &ServiceGroup;
 }
 
 impl Serviceable for Service {
-    fn name(&self) -> &String {
+    fn name(&self) -> &str {
         &self.pkg.name
     }
 
@@ -61,14 +61,14 @@ impl UserConfigWatcher {
     }
 
     pub fn add<T: Serviceable>(&mut self, service: &T) {
-        self.states.entry(service.name().clone()).or_insert_with(
-            || {
+        self.states
+            .entry(service.name().to_owned())
+            .or_insert_with(|| {
                 let have_events = Arc::new(AtomicBool::new(false));
                 Worker::run(&service.path(), Arc::clone(&have_events));
 
                 have_events
-            },
-        );
+            });
         outputln!(preamble service.service_group(), "Watching {}", USER_CONFIG_FILE);
     }
 
@@ -156,7 +156,6 @@ mod tests {
 
     use std::fs::{remove_file, File};
     use std::io::Write;
-    use std::path::PathBuf;
     use std::str::FromStr;
     use std::thread;
     use std::time::{Duration, Instant};
@@ -240,7 +239,7 @@ mod tests {
     }
 
     impl Serviceable for TestService {
-        fn name(&self) -> &String {
+        fn name(&self) -> &str {
             &self.name
         }
 
