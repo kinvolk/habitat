@@ -674,11 +674,9 @@ impl Service {
         false
     }
 
-    /// Write service files from gossip data to disk.
-    /// For the location, check `svc_file_path()`.
+    /// Write service files from gossip data to disk under [`svc_files_path()`](../../fs/fn.svc_files_path.html).
     ///
     /// Returns `true` if a file was changed, added, or removed, and `false` if there were no updates.
-    // TODO it should also update if the user.toml has changed
     pub fn update_service_files(&mut self, census_ring: &CensusRing) -> bool {
         let census_group = census_ring.census_group_for(&self.service_group).expect(
             "Service update service files failed; unable to find own service group",
