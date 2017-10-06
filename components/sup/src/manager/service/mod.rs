@@ -81,6 +81,7 @@ pub struct Service {
     pub pkg: Pkg,
     pub sys: Arc<Sys>,
     pub initialized: bool,
+    pub user_config_updated: bool,
 
     #[serde(skip_serializing)]
     config_renderer: CfgRenderer,
@@ -135,6 +136,7 @@ impl Service {
             last_election_status: ElectionStatus::None,
             needs_reload: false,
             needs_reconfiguration: false,
+            user_config_updated: false,
             manager_fs_cfg: manager_fs_cfg,
             supervisor: Supervisor::new(&service_group),
             pkg: pkg,
@@ -282,6 +284,9 @@ impl Service {
         self.supervisor.state_entered
     }
 
+    /// Performs updates and executes hooks.
+    ///
+    /// Returns `true` if the service was updated.
     pub fn tick(&mut self, census_ring: &CensusRing, launcher: &LauncherCli) -> bool {
         if !self.initialized {
             if !self.all_binds_satisfied(census_ring) {
@@ -387,29 +392,33 @@ impl Service {
         self.supervisor.state == ProcessState::Down
     }
 
-    /// Compares the current state of the service to the current state of the census ring and
-    /// re-renders all templatable content to disk.
+    /// Compares the current state of the service to the current state of the census ring and the
+    /// user-config, and re-renders all templatable content to disk.
     ///
-    /// Returns true if any modifications were made.
+    /// Returns `true` if any modifications were made.
     fn update_templates(&mut self, census_ring: &CensusRing) -> bool {
         let census_group = census_ring.census_group_for(&self.service_group).expect(
             "Service update failed; unable to find own service group",
         );
-        let cfg_updated = self.cfg.update(census_group);
+        let cfg_updated = self.cfg.update(census_group) || self.user_config_updated;
         if cfg_updated || census_ring.changed {
+            if let Err(e) = self.cfg.load_user(&self.pkg) {
+                outputln!(preamble self.service_group, "Loading user-config failed: {}", e);
+            }
             let (reload, reconfigure) = {
                 let ctx = self.render_context(census_ring);
-                let reload = self.compile_hooks(&ctx);
+                let reload = self.compile_hooks(&ctx) || self.user_config_updated;
                 let reconfigure = self.compile_configuration(&ctx);
                 (reload, reconfigure)
             };
             self.needs_reload = reload;
             self.needs_reconfiguration = reconfigure;
+            self.user_config_updated = false;
         }
         cfg_updated
     }
 
-    /// Replace the package of the running service and restart it's system process.
+    /// Replace the package of the running service and restart its system process.
     pub fn update_package(&mut self, package: PackageInstall, launcher: &LauncherCli) {
         match Pkg::from_install(package) {
             Ok(pkg) => {
@@ -464,7 +473,7 @@ impl Service {
         rumor
     }
 
-    /// Run initialization hook if present
+    /// Run initialization hook if present.
     fn initialize(&mut self) {
         if self.initialized {
             return;
@@ -480,8 +489,7 @@ impl Service {
         }
     }
 
-    /// Run reconfigure hook if present. Return false if it is not present, to trigger default
-    /// restart behavior.
+    /// Run reconfigure hook if present.
     fn reconfigure(&mut self) {
         self.needs_reconfiguration = false;
         if let Some(ref hook) = self.hooks.reconfigure {
@@ -564,6 +572,8 @@ impl Service {
     }
 
     /// Helper for compiling configuration templates into configuration files.
+    ///
+    /// Returns true if the configuration has changed.
     fn compile_configuration(&self, ctx: &RenderContext) -> bool {
         match self.config_renderer.compile(&self.pkg, ctx) {
             Ok(true) => {
@@ -583,6 +593,8 @@ impl Service {
     /// Helper for compiling hook templates into hooks.
     ///
     /// This function will also perform any necessary post-compilation tasks.
+    ///
+    /// Returns `true` if any hooks have changed.
     fn compile_hooks(&self, ctx: &RenderContext) -> bool {
         let changed = self.hooks.compile(&self.service_group, ctx);
         if let Some(err) = self.copy_run().err() {
@@ -641,13 +653,14 @@ impl Service {
             if self.needs_reload || self.process_down() || self.needs_reconfiguration {
                 self.reload(launcher);
                 if self.needs_reconfiguration {
+                    // NOTE this only runs the hook if it's defined
                     self.reconfigure()
                 }
             }
         }
     }
 
-    /// Run file_updated hook if present
+    /// Run file_updated hook if present.
     fn file_updated(&self) -> bool {
         if self.initialized {
             if let Some(ref hook) = self.hooks.file_updated {
@@ -661,10 +674,10 @@ impl Service {
         false
     }
 
-    /// Write service files from gossip data to disk.
+    /// Write service files from gossip data to disk under [`svc_files_path()`](../../fs/fn.svc_files_path.html).
     ///
-    /// Returns true if a file was changed, added, or removed, and false if there were no updates.
-    fn update_service_files(&mut self, census_ring: &CensusRing) -> bool {
+    /// Returns `true` if a file was changed, added, or removed, and `false` if there were no updates.
+    pub fn update_service_files(&mut self, census_ring: &CensusRing) -> bool {
         let census_group = census_ring.census_group_for(&self.service_group).expect(
             "Service update service files failed; unable to find own service group",
         );
@@ -724,11 +737,13 @@ impl Service {
         self.cache_health_check(check_result);
     }
 
+    // Returns `false` if the write fails.
     fn cache_service_file(&mut self, service_file: &ServiceFile) -> bool {
         let file = self.pkg.svc_files_path.join(&service_file.filename);
         self.write_cache_file(file, &service_file.body)
     }
 
+    // Returns `false` if the write fails.
     fn write_cache_file<T>(&self, file: T, contents: &[u8]) -> bool
     where
         T: AsRef<Path>,

@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::result;
 
 use ansi_term::Colour::Purple;
+use hcore::fs::USER_CONFIG_FILE;
 use hcore::crypto;
 use serde::{Serialize, Serializer};
 use serde::ser::SerializeMap;
@@ -73,7 +74,7 @@ impl Cfg {
     /// Updates the service configuration with data from a census group if the census group has
     /// newer data than the current configuration.
     ///
-    /// Returns true if the configuration was updated.
+    /// Returns `true` if the configuration was updated.
     pub fn update(&mut self, census_group: &CensusGroup) -> bool {
         match census_group.service_config {
             Some(ref config) => {
@@ -144,12 +145,17 @@ impl Cfg {
         Ok(())
     }
 
-    fn load_user(&mut self, package: &Pkg) -> Result<()> {
-        let path = package.svc_path.join("user.toml");
+    pub fn load_user(&mut self, package: &Pkg) -> Result<()> {
+        let path = package.svc_path.join(USER_CONFIG_FILE);
         let mut file = match File::open(&path) {
             Ok(file) => file,
             Err(e) => {
-                debug!("Failed to open 'user.toml', {}, {}", path.display(), e);
+                debug!(
+                    "Failed to open '{}', {}, {}",
+                    USER_CONFIG_FILE,
+                    path.display(),
+                    e
+                );
                 self.user = None;
                 return Ok(());
             }
@@ -163,7 +169,12 @@ impl Cfg {
                 self.user = Some(toml::Value::Table(toml));
             }
             Err(e) => {
-                outputln!("Failed to load 'user.toml', {}, {}", path.display(), e);
+                outputln!(
+                    "Failed to load '{}', {}, {}",
+                    USER_CONFIG_FILE,
+                    path.display(),
+                    e
+                );
                 self.user = None;
             }
         }
@@ -259,6 +270,7 @@ impl Serialize for Cfg {
 }
 
 #[derive(Debug)]
+/// Renders configuration templates into config files.
 pub struct CfgRenderer(TemplateRenderer);
 
 impl CfgRenderer {
@@ -296,6 +308,8 @@ impl CfgRenderer {
     }
 
     /// Compile and write all configuration files to the configuration directory.
+    ///
+    /// Returns `true` if the configuration has changed.
     pub fn compile(&self, pkg: &Pkg, ctx: &RenderContext) -> Result<bool> {
         // JW TODO: This function is loaded with IO errors that will be converted a Supervisor
         // error resulting in the end-user not knowing what the fuck happned at all. We need to go
