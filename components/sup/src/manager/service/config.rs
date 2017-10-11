@@ -145,7 +145,7 @@ impl Cfg {
         Ok(())
     }
 
-    fn load_user(&mut self, package: &Pkg) -> Result<()> {
+    pub fn load_user(&mut self, package: &Pkg) -> Result<()> {
         let path = package.svc_path.join(USER_CONFIG_FILE);
         let mut file = match File::open(&path) {
             Ok(file) => file,
