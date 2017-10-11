@@ -61,6 +61,7 @@ fn start(ui: &mut UI) -> Result {
     debug!("clap cli args: {:?}", m);
     let count = m.value_of("COUNT").unwrap_or("1");
     let pkg_ident = m.value_of("PKG_IDENT").unwrap();
+    let image = m.value_of("IMAGE").unwrap_or(pkg_ident)
     println!(r###"
 ## Secret for initial configuration.
 #apiVersion: v1
@@ -91,7 +92,7 @@ spec:
     group: default
     ## configSecretName is the name of the configuration secret. Edit the Kubernetes Secret at the top.
     #configSecretName: user-toml-secret
-"###, metadata_name=pkg_ident.name, image=pkg_ident, count=count);
+"###, metadata_name=pkg_ident.name, image=image, count=count);
     Ok(())
 }
 
@@ -101,6 +102,8 @@ fn cli<'a, 'b>() -> App<'a, 'b> {
         (about: "Creates a Kubernetes manifest for a Habitat package. Habitat operator must be deployed within the Kubernetes cluster to intercept the created objects.")
         (version: "TODO: no idea where to get it")
         (author: "\nAuthors: The Habitat Maintainers <humans@habitat.sh>\n\n")
+        (@arg IMAGE: --("image") +takes_value
+            "Image of the Habitat service exported as a Docker image")
         (@arg COUNT: --("count") +takes_value
             "Count in manifest")
         (@arg PKG_IDENT: +required
