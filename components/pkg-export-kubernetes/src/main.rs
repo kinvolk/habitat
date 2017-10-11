@@ -62,38 +62,43 @@ fn start(ui: &mut UI) -> Result {
     let count = m.value_of("COUNT").unwrap_or("1");
     let pkg_ident = m.value_of("PKG_IDENT").unwrap();
     println!(r###"
-
-# Use this if you want to deploy the service in the Kubernetes namespace.
-# apiVersion: v1
-# kind: Namespace
-# metadata:
-#   name: example-namespace
-# ---
+## Secret for initial configuration.
+#apiVersion: v1
+#kind: Secret
+#metadata:
+#  name: user-toml-secret
+#type: Opaque
+#data:
+## Each configuration item needs to be encoded in base64.
+## Plain text content of the secret: "port = 4444"
+#  user.toml: cG9ydCA9IDQ0NDQ=
+#---
 apiVersion: habitat.sh/v1
 kind: Habitat
 metadata:
-  name: example-standalone-habitat
-  # Uncomment this to run this service in the Kubernetes namespace. Note that this
-  # requires that the namespace is already defined. An example of the definition
-  # is at the top of the file.
-  # namespace: example-namespace
+  ## name of the Habitat service.
+  name: {metadata_name}
 spec:
-  # the core/nginx habitat service packaged as a Docker image
+  ## image is the name of the Habitat service package exported as a Docker image.
   image: {image}
+  ## count is the number of desired instances.
   count: {count}
+  ## service is an object containing parameters that effect how the Habitat service is executed.
   service:
+    ## topology refers to the Habitat topology of the service.
     topology: standalone
-    # Uncomment this if you want to have the service in a different group (by
-    # default it is "default").
-    # group: Foobar
-"###, image=pkg_ident, count=count);
+    ## group referes to a Habitat service group name, a logical grouping of services with the same package.
+    group: default
+    ## configSecretName is the name of the configuration secret. Edit the Kubernetes Secret at the top.
+    #configSecretName: user-toml-secret
+"###, metadata_name=pkg_ident.name, image=pkg_ident, count=count);
     Ok(())
 }
 
 fn cli<'a, 'b>() -> App<'a, 'b> {
     let name: &str = &*PROGRAM_NAME;
     clap_app!((name) =>
-        (about: "Creates a Kubernetes manifest for a Habitat package")
+        (about: "Creates a Kubernetes manifest for a Habitat package. Habitat operator must be deployed within the Kubernetes cluster to intercept the created objects.")
         (version: "TODO: no idea where to get it")
         (author: "\nAuthors: The Habitat Maintainers <humans@habitat.sh>\n\n")
         (@arg COUNT: --("count") +takes_value
