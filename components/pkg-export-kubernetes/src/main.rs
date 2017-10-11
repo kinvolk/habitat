@@ -105,7 +105,7 @@ fn cli<'a, 'b>() -> App<'a, 'b> {
         (@arg IMAGE: --("image") +takes_value
             "Image of the Habitat service exported as a Docker image")
         (@arg COUNT: --("count") +takes_value
-            "Count in manifest")
+            "Count is the number of desired instances")
         (@arg PKG_IDENT: +required
             "Habitat package identifier (ex: acme/redis)")
     )
