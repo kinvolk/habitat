@@ -417,7 +417,7 @@ impl Service {
         let census_group = census_ring.census_group_for(&self.service_group).expect(
             "Service update failed; unable to find own service group",
         );
-        let cfg_updated = self.cfg.update(census_group);
+        let cfg_updated = self.cfg.update(census_group) || self.user_config_updated;
         if cfg_updated || census_ring.changed() {
             let (reload, reconfigure) = {
                 let ctx = self.render_context(census_ring);
