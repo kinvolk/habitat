@@ -419,6 +419,9 @@ impl Service {
         );
         let cfg_updated = self.cfg.update(census_group) || self.user_config_updated;
         if cfg_updated || census_ring.changed() {
+            if let Err(e) = self.cfg.load_user(&self.pkg) {
+                outputln!(preamble self.service_group, "Loading user-config failed: {}", e);
+            }
             let (reload, reconfigure) = {
                 let ctx = self.render_context(census_ring);
                 let reload = self.compile_hooks(&ctx);
