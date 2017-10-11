@@ -427,6 +427,7 @@ impl Service {
             };
             self.needs_reload = reload;
             self.needs_reconfiguration = reconfigure;
+            self.user_config_updated = false;
         }
         cfg_updated
     }
