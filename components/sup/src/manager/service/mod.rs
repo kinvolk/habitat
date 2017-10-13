@@ -83,6 +83,7 @@ pub struct Service {
     pub pkg: Pkg,
     pub sys: Arc<Sys>,
     pub initialized: bool,
+    pub user_config_updated: bool,
 
     #[serde(skip_serializing)]
     config_renderer: CfgRenderer,
@@ -138,6 +139,7 @@ impl Service {
             last_election_status: ElectionStatus::None,
             needs_reload: false,
             needs_reconfiguration: false,
+            user_config_updated: false,
             manager_fs_cfg: manager_fs_cfg,
             supervisor: Supervisor::new(&service_group),
             pkg: pkg,
