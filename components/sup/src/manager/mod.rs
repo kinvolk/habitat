@@ -580,6 +580,7 @@ impl Manager {
             }
             self.update_running_services_from_spec_watcher()?;
             self.update_peers_from_watch_file()?;
+            self.update_running_services_from_user_config_watcher();
             self.check_for_updated_packages();
             self.restart_elections();
             self.census_ring.update_from_rumors(
@@ -957,6 +958,17 @@ impl Manager {
                     self.butterfly.member_list.set_initial_members(members);
                 }
                 Ok(())
+            }
+        }
+    }
+
+    fn update_running_services_from_user_config_watcher(&mut self) {
+        let mut services = self.services.write().expect("Services lock is poisoned");
+
+        for service in services.iter_mut() {
+            if self.user_config_watcher.have_events_for(service) {
+                outputln!("Reloading service {}", &service.spec_ident);
+                service.user_config_updated = true;
             }
         }
     }
