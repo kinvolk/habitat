@@ -101,6 +101,8 @@ pub struct Pkg {
     pub svc_run: PathBuf,
     pub svc_user: String,
     pub svc_group: String,
+    pub user_path: PathBuf,
+    pub user_config_path: PathBuf,
 }
 
 impl Pkg {
@@ -117,6 +119,8 @@ impl Pkg {
             svc_pid_file: fs::svc_pid_file(&package.ident.name),
             svc_user: svc_user,
             svc_group: svc_group,
+            user_path: fs::user_path(&package.ident.name),
+            user_config_path: fs::user_config_path(&package.ident.name),
             env: Env::new(&package)?,
             deps: package.tdeps().map_err(|e| {
                 sup_error!(Error::BadPackage(package.clone(), e))

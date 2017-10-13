@@ -145,17 +145,10 @@ impl Cfg {
         Ok(())
     }
 
-    pub fn load_user(&mut self, package: &Pkg) -> Result<()> {
-        let path = package.svc_path.join(USER_CONFIG_FILE);
-        let mut file = match File::open(&path) {
-            Ok(file) => file,
-            Err(e) => {
-                debug!(
-                    "Failed to open '{}', {}, {}",
-                    USER_CONFIG_FILE,
-                    path.display(),
-                    e
-                );
+    fn load_user(&mut self, package: &Pkg) -> Result<()> {
+        let (mut file, path) = match self.open_user_toml(&package) {
+            Some((f, p)) => (f, p),
+            None => {
                 self.user = None;
                 return Ok(());
             }
@@ -179,6 +172,27 @@ impl Cfg {
             }
         }
         Ok(())
+    }
+
+    fn open_user_toml(&mut self, package: &Pkg) -> Option<(File, PathBuf)> {
+        let paths = vec![
+            package.svc_path.join(USER_CONFIG_FILE),
+            package.user_config_path.join(USER_CONFIG_FILE),
+        ];
+        for path in paths {
+            match File::open(&path) {
+                Ok(file) => return Some((file, path)),
+                Err(e) => {
+                    debug!(
+                        "Failed to open '{}', {}, {}",
+                        USER_CONFIG_FILE,
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+        None
     }
 
     fn load_environment(&mut self, package: &Pkg) -> Result<()> {
