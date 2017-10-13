@@ -524,6 +524,16 @@ impl Manager {
                 0,
             );
         }
+
+        if let Err(e) = self.user_config_watcher.add(&service) {
+            outputln!(
+                "Unable to start UserConfigWatcher for {}: {}",
+                service.spec_ident,
+                e
+            );
+            return;
+        }
+
         self.updater.add(&service);
         self.services
             .write()
