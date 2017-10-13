@@ -83,6 +83,7 @@ pub struct Service {
     pub pkg: Pkg,
     pub sys: Arc<Sys>,
     pub initialized: bool,
+    pub user_config_updated: bool,
 
     #[serde(skip_serializing)]
     config_renderer: CfgRenderer,
@@ -138,6 +139,7 @@ impl Service {
             last_election_status: ElectionStatus::None,
             needs_reload: false,
             needs_reconfiguration: false,
+            user_config_updated: false,
             manager_fs_cfg: manager_fs_cfg,
             supervisor: Supervisor::new(&service_group),
             pkg: pkg,
@@ -416,18 +418,35 @@ impl Service {
         let census_group = census_ring.census_group_for(&self.service_group).expect(
             "Service update failed; unable to find own service group",
         );
-        let cfg_updated = self.cfg.update(census_group);
-        if cfg_updated || census_ring.changed() {
-            let (reload, reconfigure) = {
-                let ctx = self.render_context(census_ring);
-                let reload = self.compile_hooks(&ctx);
-                let reconfigure = self.compile_configuration(&ctx);
-                (reload, reconfigure)
-            };
-            self.needs_reload = reload;
-            self.needs_reconfiguration = reconfigure;
+        let cfg_updated_from_rumors = self.cfg.update(census_group);
+
+        if self.user_config_updated {
+            if let Err(e) = self.cfg.reload_user() {
+                outputln!(preamble self.service_group, "Loading user-config failed: {}", e);
+            }
         }
-        cfg_updated
+
+        let (cfg_changed, reload, reconfigure) = {
+            let ctx = self.render_context(census_ring);
+
+            if cfg_updated_from_rumors || census_ring.changed() {
+                let config_changed = cfg_updated_from_rumors || self.user_config_updated;
+                let needs_reload = self.compile_hooks(&ctx) || self.user_config_updated;
+                let needs_reconfigure = self.compile_configuration(&ctx);
+
+                (config_changed, needs_reload, needs_reconfigure)
+            } else if self.user_config_updated {
+                (true, true, self.compile_configuration(&ctx))
+            } else {
+                (false, self.needs_reload, self.needs_reconfiguration)
+            }
+        };
+
+        self.needs_reload = reload;
+        self.needs_reconfiguration = reconfigure;
+        self.user_config_updated = false;
+
+        cfg_changed
     }
 
     /// Replace the package of the running service and restart it's system process.
