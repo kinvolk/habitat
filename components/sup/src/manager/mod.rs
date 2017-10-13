@@ -22,6 +22,7 @@ mod service_updater;
 mod spec_watcher;
 mod file_watcher;
 mod peer_watcher;
+mod user_config_watcher;
 mod sys;
 
 use std::collections::HashMap;
@@ -59,6 +60,7 @@ use self::service::{DesiredState, Pkg, ProcessState, StartStyle};
 use self::service_updater::ServiceUpdater;
 use self::spec_watcher::{SpecWatcher, SpecWatcherEvent};
 use self::peer_watcher::PeerWatcher;
+use self::user_config_watcher::UserConfigWatcher;
 use VERSION;
 use error::{Error, Result, SupError};
 use config::GossipListenAddr;
@@ -147,6 +149,7 @@ pub struct Manager {
     services: Arc<RwLock<Vec<Service>>>,
     updater: ServiceUpdater,
     watcher: SpecWatcher,
+    user_config_watcher: UserConfigWatcher,
     organization: Option<String>,
     self_updater: Option<SelfUpdater>,
     service_states: HashMap<PackageIdent, Timespec>,
@@ -319,6 +322,7 @@ impl Manager {
             launcher: launcher,
             services: services,
             watcher: SpecWatcher::run(&fs_cfg.specs_path)?,
+            user_config_watcher: UserConfigWatcher::new(),
             fs_cfg: Arc::new(fs_cfg),
             organization: cfg.organization,
             service_states: HashMap::new(),
