@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Sender, Receiver, TryRecvError};
+use std::sync::mpsc::{channel, Sender, SendError, Receiver, TryRecvError};
 use std::thread::Builder as ThreadBuilder;
 
 use super::file_watcher::{Callbacks, default_file_watcher};
@@ -53,6 +53,8 @@ impl Serviceable for Service {
 struct WorkerState {
     // This channel is used by the watcher to be notified when a worker has events.
     have_events: Receiver<()>,
+    // This channel is used by the watcher to notify a worker to stop running.
+    stop_running: Sender<()>,
 }
 
 type ServiceName = String;
@@ -72,16 +74,27 @@ impl UserConfigWatcher {
         if let None = self.states.get(service.name()) {
             // Establish bi-directional communication with the worker by creating two channels.
             let (events_tx, events_rx) = channel();
+            let (running_tx, running_rx) = channel();
 
-            Worker::run(&service.path(), events_tx)?;
+            Worker::run(&service.path(), events_tx, running_rx)?;
 
             outputln!(preamble service.service_group(), "Watching {}", USER_CONFIG_FILE);
 
             let state = WorkerState {
                 have_events: events_rx,
+                stop_running: running_tx,
             };
 
             self.states.insert(service.name().to_owned(), state);
+        }
+
+        Ok(())
+    }
+
+    /// Removes a service from the User Config Watcher, thereby stopping the watcher thread.
+    pub fn remove<T: Serviceable>(&mut self, service: &T) -> Result<(), SendError<()>> {
+        if let Some(state) = self.states.remove(service.name()) {
+            state.stop_running.send(())?;
         }
 
         Ok(())
@@ -141,10 +154,11 @@ impl Worker {
     pub fn run(
         service_path: &Path,
         have_events: Sender<()>,
+        stop_running: Receiver<()>,
     ) -> io::Result<()> {
         let path = service_path.join(USER_CONFIG_FILE);
 
-        Self::setup_watcher(path, have_events)?;
+        Self::setup_watcher(path, have_events, stop_running)?;
 
         Ok(())
     }
@@ -152,6 +166,7 @@ impl Worker {
     fn setup_watcher(
         path: PathBuf,
         have_events: Sender<()>,
+        stop_running: Receiver<()>,
     ) -> io::Result<()> {
         ThreadBuilder::new()
             .name(format!("user-config-watcher-{}", path.display()))
@@ -173,14 +188,31 @@ impl Worker {
                     }
                 };
 
-                if let Err(e) = file_watcher.run() {
-                    outputln!(
-                        "UserConfigWatcher({}) could not run notifier, ending thread ({})",
-                        path.display(),
-                        e
-                    );
-                    return;
-                };
+                loop {
+                    match stop_running.try_recv() {
+                        // As long as the `stop_running` channel is empty, this branch will execute
+                        // on every iteration.
+                        Err(TryRecvError::Empty) => {
+                            if let Err(e) = file_watcher.single_iteration() {
+                                outputln!(
+                                    "UserConfigWatcher({}) could not run notifier, ending thread ({})",
+                                    path.display(),
+                                    e
+                                );
+                                return;
+                            };
+                        }
+
+                        // If we receive a message on the channel, we stop.
+                        Ok(()) => break,
+
+                        // If the channel is disconnected, we stop as well.
+                        Err(TryRecvError::Disconnected) => {
+                            debug!("UserConfigWatcher({}) worker thread failed to receive on channel", path.display());
+                            break;
+                        },
+                    }
+                }
             })?;
 
         Ok(())
