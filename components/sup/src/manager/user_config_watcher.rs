@@ -136,18 +136,20 @@ struct UserConfigCallbacks {
 
 impl Callbacks for UserConfigCallbacks {
     fn file_appeared(&mut self, _: &Path) {
-        if let Err(TrySendError::Disconnected(_)) = self.have_events.try_send(()) {
-            debug!("Worker could not notify Manager of event");
-        }
+        self.perform();
     }
 
     fn file_modified(&mut self, _: &Path) {
-        if let Err(TrySendError::Disconnected(_)) = self.have_events.try_send(()) {
-            debug!("Worker could not notify Manager of event");
-        }
+        self.perform();
     }
 
     fn file_disappeared(&mut self, _: &Path) {
+        self.perform();
+    }
+}
+
+impl UserConfigCallbacks {
+    fn perform(&self) {
         if let Err(TrySendError::Disconnected(_)) = self.have_events.try_send(()) {
             debug!("Worker could not notify Manager of event");
         }
