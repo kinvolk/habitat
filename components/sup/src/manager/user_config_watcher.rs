@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Sender, SendError, Receiver, TryRecvError};
+use std::sync::mpsc::{channel, sync_channel, Sender, SendError, SyncSender, Receiver, TrySendError, TryRecvError};
 use std::thread::Builder as ThreadBuilder;
 
 use super::file_watcher::{Callbacks, default_file_watcher};
@@ -51,9 +51,13 @@ impl Serviceable for Service {
 
 // WorkerState contains the channels the worker uses to communicate with the Watcher.
 struct WorkerState {
-    // This channel is used by the watcher to be notified when a worker has events.
+    // This receiver is used by the watcher to be notified when a worker has events.
+    // The channel is a SyncChannel with buffer size 1, as we are only interested in the fact that there were events,
+    // not how many there were.
     have_events: Receiver<()>,
-    // This channel is used by the watcher to notify a worker to stop running.
+    // This sender is used by the watcher to notify a worker to stop running.
+    // It is an async channel because we never want the UserConfigWatcher to block, even if the receiver end of
+    // the channel somehow dies and/or fails to consume the message.
     stop_running: Sender<()>,
 }
 
@@ -73,7 +77,10 @@ impl UserConfigWatcher {
         // return value, which we need to return the error from `Worker::run`.
         if let None = self.states.get(service.name()) {
             // Establish bi-directional communication with the worker by creating two channels.
-            let (events_tx, events_rx) = channel();
+            // The sync_channel's buffer size is 1 because we want to use it as a boolean, i.e. we
+            // are not interested in the events themselves, but only whether at least one has
+            // happened.
+            let (events_tx, events_rx) = sync_channel(1);
             let (running_tx, running_rx) = channel();
 
             Worker::run(&service.path(), events_tx, running_rx)?;
@@ -124,25 +131,25 @@ impl UserConfigWatcher {
 }
 
 struct UserConfigCallbacks {
-    have_events: Sender<()>,
+    have_events: SyncSender<()>,
 }
 
 impl Callbacks for UserConfigCallbacks {
     fn file_appeared(&mut self, _: &Path) {
-        if let Err(e) = self.have_events.send(()) {
-            debug!("Worker could not notify Manager of event: {}", e);
+        if let Err(TrySendError::Disconnected(_)) = self.have_events.try_send(()) {
+            debug!("Worker could not notify Manager of event");
         }
     }
 
     fn file_modified(&mut self, _: &Path) {
-        if let Err(e) = self.have_events.send(()) {
-            debug!("Worker could not notify Manager of event: {}", e);
+        if let Err(TrySendError::Disconnected(_)) = self.have_events.try_send(()) {
+            debug!("Worker could not notify Manager of event");
         }
     }
 
     fn file_disappeared(&mut self, _: &Path) {
-        if let Err(e) = self.have_events.send(()) {
-            debug!("Worker could not notify Manager of event: {}", e);
+        if let Err(TrySendError::Disconnected(_)) = self.have_events.try_send(()) {
+            debug!("Worker could not notify Manager of event");
         }
     }
 }
@@ -153,7 +160,7 @@ impl Worker {
     // starts a new thread with the file watcher tracking the service's user-config file
     pub fn run(
         service_path: &Path,
-        have_events: Sender<()>,
+        have_events: SyncSender<()>,
         stop_running: Receiver<()>,
     ) -> io::Result<()> {
         let path = service_path.join(USER_CONFIG_FILE);
@@ -165,7 +172,7 @@ impl Worker {
 
     fn setup_watcher(
         path: PathBuf,
-        have_events: Sender<()>,
+        have_events: SyncSender<()>,
         stop_running: Receiver<()>,
     ) -> io::Result<()> {
         ThreadBuilder::new()
