@@ -115,7 +115,7 @@ impl UserConfigWatcher {
             let rx = &state.have_events;
 
             match rx.try_recv() {
-                Ok(()) => {
+                Ok(_) => {
                     return true;
                 }
                 Err(TryRecvError::Empty) => return false,
@@ -213,7 +213,7 @@ impl Worker {
                         }
 
                         // If we receive a message on the channel, we stop.
-                        Ok(()) => break,
+                        Ok(_) => break,
 
                         // If the channel is disconnected, we stop as well.
                         Err(TryRecvError::Disconnected) => {
