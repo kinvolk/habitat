@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, sync_channel, Sender, SendError, SyncSender, Receiver, TrySendError, TryRecvError};
 use std::thread::Builder as ThreadBuilder;
 
-use super::file_watcher::{Callbacks, default_file_watcher};
+use super::file_watcher::{Callbacks, default_file_watcher_with_no_initial_event};
 
 use hcore::fs::USER_CONFIG_FILE;
 use hcore::service::ServiceGroup;
@@ -185,7 +185,7 @@ impl Worker {
                     path.display()
                 );
                 let callbacks = UserConfigCallbacks { have_events: have_events };
-                let mut file_watcher = match default_file_watcher(&path, callbacks) {
+                let mut file_watcher = match default_file_watcher_with_no_initial_event(&path, callbacks) {
                     Ok(w) => w,
                     Err(e) => {
                         outputln!(
