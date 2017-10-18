@@ -417,22 +417,36 @@ impl Service {
         let census_group = census_ring.census_group_for(&self.service_group).expect(
             "Service update failed; unable to find own service group",
         );
-        let cfg_updated = self.cfg.update(census_group) || self.user_config_updated;
-        if cfg_updated || census_ring.changed() {
+        let cfg_updated_from_rumors = self.cfg.update(census_group);
+        let cfg_changed = cfg_updated_from_rumors || self.user_config_updated;
+        let something_to_do = cfg_changed || census_ring.changed();
+
+        if something_to_do {
             if let Err(e) = self.cfg.load_user(&self.pkg) {
                 outputln!(preamble self.service_group, "Loading user-config failed: {}", e);
             }
+
             let (reload, reconfigure) = {
                 let ctx = self.render_context(census_ring);
-                let reload = self.compile_hooks(&ctx) || self.user_config_updated;
+
+                let hooks_changed = if cfg_updated_from_rumors || census_ring.changed() {
+                    self.compile_hooks(&ctx)
+                } else {
+                    false
+                };
+
                 let reconfigure = self.compile_configuration(&ctx);
+                let reload = hooks_changed || self.user_config_updated;
+
                 (reload, reconfigure)
             };
+
             self.needs_reload = reload;
             self.needs_reconfiguration = reconfigure;
             self.user_config_updated = false;
         }
-        cfg_updated
+
+        cfg_changed
     }
 
     /// Replace the package of the running service and restart its system process.
