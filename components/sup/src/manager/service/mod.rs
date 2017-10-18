@@ -425,8 +425,10 @@ impl Service {
         let something_to_do = cfg_changed || census_ring.changed();
 
         if something_to_do {
-            if let Err(e) = self.cfg.reload_user() {
-                outputln!(preamble self.service_group, "Loading user-config failed: {}", e);
+            if self.user_config_updated {
+                if let Err(e) = self.cfg.reload_user() {
+                    outputln!(preamble self.service_group, "Loading user-config failed: {}", e);
+                }
             }
 
             let (reload, reconfigure) = {
