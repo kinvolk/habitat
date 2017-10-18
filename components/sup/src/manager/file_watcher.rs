@@ -1211,6 +1211,17 @@ where
     return FileWatcher::<C, RecommendedWatcher>::create(path, callbacks);
 }
 
+pub fn default_file_watcher_with_no_initial_event<P, C>(
+    path: P,
+    callbacks: C,
+) -> Result<FileWatcher<C, RecommendedWatcher>>
+where
+    P: Into<PathBuf>,
+    C: Callbacks,
+{
+    return FileWatcher::<C, RecommendedWatcher>::create_with_no_initial_event(path, callbacks);
+}
+
 impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
     /// Creates a new `FileWatcher`.
     ///
