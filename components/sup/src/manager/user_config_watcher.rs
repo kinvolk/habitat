@@ -40,7 +40,7 @@ impl Serviceable for Service {
     }
 
     fn path(&self) -> &Path {
-        &self.pkg.svc_path
+        &self.pkg.user_config_path
     }
 
     fn service_group(&self) -> &ServiceGroup {
