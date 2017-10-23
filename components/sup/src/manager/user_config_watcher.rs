@@ -113,7 +113,6 @@ impl UserConfigWatcher {
     /// This also consumes the events.
     pub fn have_events_for<T: Serviceable>(&self, service: &T) -> bool {
         if let Some(state) = self.states.get(service.name()) {
-
             let rx = &state.have_events;
 
             match rx.try_recv() {
@@ -122,7 +121,7 @@ impl UserConfigWatcher {
                 }
                 Err(TryRecvError::Empty) => return false,
                 Err(TryRecvError::Disconnected) => {
-                    debug!("UserConfigWatcher worker has died; restarting...");
+                    debug!("UserConfigWatcher worker has died!");
                     return false;
                 }
             }
