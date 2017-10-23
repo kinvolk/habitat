@@ -98,7 +98,8 @@ impl UserConfigWatcher {
         Ok(())
     }
 
-    /// Removes a service from the User Config Watcher, thereby stopping the watcher thread.
+    /// Removes a service from the User Config Watcher, and sends a message to the watcher thread
+    /// to stop running.
     pub fn remove<T: Serviceable>(&mut self, service: &T) -> Result<(), SendError<()>> {
         if let Some(state) = self.states.remove(service.name()) {
             state.stop_running.send(())?;
@@ -107,8 +108,9 @@ impl UserConfigWatcher {
         Ok(())
     }
 
-    /// Checks whether the watcher for the specified service has observed any events, thereby
-    /// consuming them.
+    /// Checks whether the watcher for the specified service has observed any events.
+    ///
+    /// This also consumes the events.
     pub fn have_events_for<T: Serviceable>(&self, service: &T) -> bool {
         if let Some(state) = self.states.get(service.name()) {
 
