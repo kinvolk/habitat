@@ -59,6 +59,11 @@ struct WorkerState {
     // It is an async channel because we never want the UserConfigWatcher to block, even if the receiver end of
     // the channel somehow dies and/or fails to consume the message.
     stop_running: Sender<()>,
+    // This receiver is used by the watcher tests to be notified when
+    // a worker finished setting up the watcher and is about to
+    // starting looping it.
+    #[allow(dead_code)]
+    started_watching: Receiver<()>,
 }
 
 type ServiceName = String;
@@ -82,14 +87,16 @@ impl UserConfigWatcher {
             // happened.
             let (events_tx, events_rx) = sync_channel(1);
             let (running_tx, running_rx) = channel();
+            let (watching_tx, watching_rx) = sync_channel(1);
 
-            Worker::run(&service.path(), events_tx, running_rx)?;
+            Worker::run(&service.path(), events_tx, running_rx, watching_tx)?;
 
             outputln!(preamble service.service_group(), "Watching {}", USER_CONFIG_FILE);
 
             let state = WorkerState {
                 have_events: events_rx,
                 stop_running: running_tx,
+                started_watching: watching_rx,
             };
 
             self.states.insert(service.name().to_owned(), state);
@@ -165,10 +172,11 @@ impl Worker {
         service_path: &Path,
         have_events: SyncSender<()>,
         stop_running: Receiver<()>,
+        started_watching: SyncSender<()>,
     ) -> io::Result<()> {
         let path = service_path.join(USER_CONFIG_FILE);
 
-        Self::setup_watcher(path, have_events, stop_running)?;
+        Self::setup_watcher(path, have_events, stop_running, started_watching)?;
 
         Ok(())
     }
@@ -177,6 +185,7 @@ impl Worker {
         path: PathBuf,
         have_events: SyncSender<()>,
         stop_running: Receiver<()>,
+        started_watching: SyncSender<()>,
     ) -> io::Result<()> {
         ThreadBuilder::new()
             .name(format!("user-config-watcher-{}", path.display()))
@@ -197,6 +206,8 @@ impl Worker {
                         return;
                     }
                 };
+
+                let _ = started_watching.try_send(());
 
                 loop {
                     match stop_running.try_recv() {
@@ -255,6 +266,7 @@ mod tests {
         let service = TestService::default();
         let mut ucm = UserConfigWatcher::new();
         ucm.add(&service).expect("adding service");
+        assert!(wait_for_watcher(&ucm, &service));
 
         File::create(service.path().join(USER_CONFIG_FILE)).expect("creating file");
 
@@ -268,6 +280,7 @@ mod tests {
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service).expect("adding service");
+        assert!(wait_for_watcher(&ucm, &service));
         let mut file = File::create(&file_path).expect("creating file");
 
         file.write_all(b"42").expect(USER_CONFIG_FILE);
@@ -282,6 +295,7 @@ mod tests {
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service).expect("adding service");
+        assert!(wait_for_watcher(&ucm, &service));
         File::create(&file_path).expect("creating file");
 
         // Allow the watcher to notice that a file was created.
@@ -290,6 +304,24 @@ mod tests {
         remove_file(&file_path).expect("removing file");
 
         assert!(wait_for_events(&ucm, &service));
+    }
+
+    fn wait_for_watcher<T: Serviceable>(ucm: &UserConfigWatcher, service: &T) -> bool {
+        let start = Instant::now();
+        let timeout = Duration::from_millis(1000);
+
+        while start.elapsed() < timeout {
+            let state = ucm.states.get(service.name()).expect("service added");
+            match state.started_watching.try_recv() {
+                Ok(_) => return true,
+                Err(TryRecvError::Empty) => (),
+                Err(TryRecvError::Disconnected) => return false,
+            }
+
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        false
     }
 
     fn wait_for_events<T: Serviceable>(ucm: &UserConfigWatcher, service: &T) -> bool {
