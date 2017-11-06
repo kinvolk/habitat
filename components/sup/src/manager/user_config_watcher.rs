@@ -20,25 +20,26 @@ use std::thread::Builder as ThreadBuilder;
 
 use super::file_watcher::{Callbacks, default_file_watcher};
 
+use hcore::fs::USER_CONFIG_FILE;
 use hcore::service::ServiceGroup;
 use manager::service::Service;
 
 static LOGKEY: &'static str = "UCW";
 
-// This trait exists to ease the testing of functions that receive a Service.  Creating Services
+// This trait exists to ease the testing of functions that receive a Service. Creating Services
 // requires a lot of ceremony, so we work around this with this trait.
 pub trait Serviceable {
-    fn name(&self) -> &String;
-    fn path(&self) -> &PathBuf;
+    fn name(&self) -> &str;
+    fn path(&self) -> &Path;
     fn service_group(&self) -> &ServiceGroup;
 }
 
 impl Serviceable for Service {
-    fn name(&self) -> &String {
+    fn name(&self) -> &str {
         &self.pkg.name
     }
 
-    fn path(&self) -> &PathBuf {
+    fn path(&self) -> &Path {
         &self.pkg.svc_path
     }
 
@@ -74,7 +75,7 @@ impl UserConfigWatcher {
 
             Worker::run(&service.path(), events_tx)?;
 
-            outputln!(preamble service.service_group(), "Watching user.toml");
+            outputln!(preamble service.service_group(), "Watching {}", USER_CONFIG_FILE);
 
             let state = WorkerState {
                 have_events: events_rx,
@@ -141,7 +142,7 @@ impl Worker {
         service_path: &Path,
         have_events: Sender<()>,
     ) -> io::Result<()> {
-        let path = service_path.join("user.toml");
+        let path = service_path.join(USER_CONFIG_FILE);
 
         Self::setup_watcher(path, have_events)?;
 
@@ -172,7 +173,6 @@ impl Worker {
                     }
                 };
 
-
                 if let Err(e) = file_watcher.run() {
                     outputln!(
                         "UserConfigWatcher({}) could not run notifier, ending thread ({})",
@@ -193,7 +193,6 @@ mod tests {
 
     use std::fs::{remove_file, File};
     use std::io::Write;
-    use std::path::PathBuf;
     use std::str::FromStr;
     use std::thread;
     use std::time::{Duration, Instant};
@@ -215,7 +214,7 @@ mod tests {
         let mut ucm = UserConfigWatcher::new();
         ucm.add(&service).expect("adding service");
 
-        File::create(service.path().join("user.toml")).expect("creating file");
+        File::create(service.path().join(USER_CONFIG_FILE)).expect("creating file");
 
         assert!(wait_for_events(&ucm, &service));
     }
@@ -223,13 +222,13 @@ mod tests {
     #[test]
     fn events_present_after_changing_config() {
         let service = TestService::default();
-        let file_path = service.path().join("user.toml");
+        let file_path = service.path().join(USER_CONFIG_FILE);
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service).expect("adding service");
         let mut file = File::create(&file_path).expect("creating file");
 
-        file.write_all(b"42").expect("writing to user.toml");
+        file.write_all(b"42").expect(USER_CONFIG_FILE);
 
         assert!(wait_for_events(&ucm, &service));
     }
@@ -237,14 +236,14 @@ mod tests {
     #[test]
     fn events_present_after_removing_config() {
         let service = TestService::default();
-        let file_path = service.path().join("user.toml");
+        let file_path = service.path().join(USER_CONFIG_FILE);
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service).expect("adding service");
         File::create(&file_path).expect("creating file");
 
         // Allow the watcher to notice that a file was created.
-        thread::sleep(Duration::from_millis(100));
+        wait_for_events(&ucm, &service);
 
         remove_file(&file_path).expect("removing file");
 
@@ -268,17 +267,17 @@ mod tests {
 
     struct TestService {
         name: String,
-        path: PathBuf,
+        path: TempDir,
         service_group: ServiceGroup,
     }
 
     impl Serviceable for TestService {
-        fn name(&self) -> &String {
+        fn name(&self) -> &str {
             &self.name
         }
 
-        fn path(&self) -> &PathBuf {
-            &self.path
+        fn path(&self) -> &Path {
+            self.path.path()
         }
 
         fn service_group(&self) -> &ServiceGroup {
@@ -290,9 +289,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 name: String::from("foo"),
-                path: TempDir::new("user-config-watcher")
-                    .expect("creating temp dir")
-                    .into_path(),
+                path: TempDir::new("user-config-watcher").expect("creating temp dir"),
                 service_group: ServiceGroup::from_str("foo.bar@yoyodine").unwrap(),
             }
         }
