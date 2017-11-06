@@ -36,6 +36,8 @@ use std::thread;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use std::mem;
+use std::ops::DerefMut;
 
 use butterfly;
 use butterfly::member::Member;
@@ -847,7 +849,7 @@ impl Manager {
     /// service. Passing a value of `false` will let the Launcher keep the service running. This
     /// useful if you want the Supervisor to shutdown temporarily and then come back and re-attach
     /// to all running processes.
-    fn remove_service(&self, service: &mut Service, term: bool) {
+    fn remove_service(&mut self, service: &mut Service, term: bool) {
         // JW TODO: Update service rumor to remove service from cluster
         if term {
             service.stop(&self.launcher);
@@ -869,6 +871,13 @@ impl Manager {
                 "Unable to cleanup service health cache, {}, {}",
                 service,
                 err
+            );
+        }
+
+        if let Err(_) = self.user_config_watcher.remove(service) {
+            debug!(
+                "Error stopping user-config watcher thread for service {}",
+                service
             );
         }
     }
@@ -895,13 +904,23 @@ impl Manager {
         self.butterfly.restart_elections();
     }
 
-    fn shutdown(&self) {
+    fn shutdown(&mut self) {
         outputln!("Gracefully departing from butterfly network.");
         self.butterfly.set_departed();
 
-        let mut services = self.services.write().expect("Services lock is poisend!");
+        let mut svcs = Vec::new();
 
-        for mut service in services.drain(..) {
+        // The problem we're trying to work around here by adding this block is that `write`
+        // creates an immutable borrow on `self`, and `self.remove_service` needs `&mut self`.
+        // The solution is to introduce the block to drop the borrow before the call to
+        // `self.remove_service`, and use `mem::swap` to copy the services to a variable defined
+        // outside the block while we have the lock.
+        {
+            let mut services = self.services.write().expect("Services lock is poisoned!");
+            mem::swap(services.deref_mut(), &mut svcs);
+        }
+
+        for mut service in svcs.drain(..) {
             self.remove_service(&mut service, false);
         }
         release_process_lock(&self.fs_cfg);
@@ -975,20 +994,26 @@ impl Manager {
     }
 
     fn remove_service_for_spec(&mut self, spec: &ServiceSpec) -> Result<()> {
-        let mut services = self.services.write().expect("Services lock is poisoned");
-        // TODO fn: storing services as a `Vec` is a bit crazy when you have to do these
-        // shenanigans--maybe we want to consider changing the data structure in the future?
-        let services_idx = match services.iter().position(|ref s| s.spec_ident == spec.ident) {
-            Some(i) => i,
-            None => {
-                outputln!(
-                    "Tried to remove service for {} but could not find it running, skipping",
-                    &spec.ident
-                );
-                return Ok(());
-            }
-        };
-        let mut service = services.remove(services_idx);
+        let mut service: Service;
+
+        {
+            let mut services = self.services.write().expect("Services lock is poisoned");
+            // TODO fn: storing services as a `Vec` is a bit crazy when you have to do these
+            // shenanigans--maybe we want to consider changing the data structure in the future?
+            let services_idx = match services.iter().position(|ref s| s.spec_ident == spec.ident) {
+                Some(i) => i,
+                None => {
+                    outputln!(
+                        "Tried to remove service for {} but could not find it running, skipping",
+                        &spec.ident
+                    );
+                    return Ok(());
+                }
+            };
+
+            service = services.remove(services_idx);
+        }
+
         self.remove_service(&mut service, true);
         Ok(())
     }
