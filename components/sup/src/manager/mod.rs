@@ -912,8 +912,8 @@ impl Manager {
 
         // The problem we're trying to work around here by adding this block is that `write`
         // creates an immutable borrow on `self`, and `self.remove_service` needs `&mut self`.
-        // The solution is to introduce the block to drop the borrow before the call to
-        // `self.remove_service`, and use `mem::swap` to copy the services to a variable defined
+        // The solution is to introduce the block to drop the immutable borrow before the call to
+        // `self.remove_service`, and use `mem::swap` to move the services to a variable defined
         // outside the block while we have the lock.
         {
             let mut services = self.services.write().expect("Services lock is poisoned!");
