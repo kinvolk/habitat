@@ -24,6 +24,7 @@ use super::file_watcher::{Callbacks, default_file_watcher_with_no_initial_event}
 use hcore::fs::USER_CONFIG_FILE;
 use hcore::service::ServiceGroup;
 use manager::service::Service;
+use manager::service::UserConfigPath;
 
 static LOGKEY: &'static str = "UCW";
 
@@ -31,7 +32,7 @@ static LOGKEY: &'static str = "UCW";
 // requires a lot of ceremony, so we work around this with this trait.
 pub trait Serviceable {
     fn name(&self) -> &str;
-    fn path(&self) -> &Path;
+    fn path(&self) -> UserConfigPath;
     fn service_group(&self) -> &ServiceGroup;
 }
 
@@ -40,8 +41,8 @@ impl Serviceable for Service {
         &self.pkg.name
     }
 
-    fn path(&self) -> &Path {
-        &self.pkg.user_config_path
+    fn path(&self) -> UserConfigPath {
+        self.cfg.user_config_path.clone()
     }
 
     fn service_group(&self) -> &ServiceGroup {
@@ -84,7 +85,19 @@ impl UserConfigWatcher {
     pub fn add<T: Serviceable>(&mut self, service: &T) -> io::Result<()> {
         // It isn't possible to use the `or_insert_with` function here because it can't have a
         // return value, which we need to return the error from `Worker::run`.
-        if let None = self.states.get(service.name()) {
+        if self.states.get(service.name()).is_none() {
+            let user_toml_path = match service.path() {
+                UserConfigPath::Recommended(p) => p.join(USER_CONFIG_FILE),
+                UserConfigPath::Deprecated(p) => {
+                    outputln!(
+                        preamble service.service_group(),
+                        "Not watching {}, because it is located in deprecated path ({}).",
+                        USER_CONFIG_FILE,
+                        p.display(),
+                    );
+                    return Ok(());
+                }
+            };
             // Establish bi-directional communication with the worker by creating two channels.
             // The sync_channel's buffer size is 1 because we want to use it as a boolean, i.e. we
             // are not interested in the events themselves, but only whether at least one has
@@ -93,7 +106,7 @@ impl UserConfigWatcher {
             let (running_tx, running_rx) = channel();
             let (watching_tx, watching_rx) = sync_channel(1);
 
-            Worker::run(&service.path(), events_tx, running_rx, watching_tx)?;
+            Worker::run(user_toml_path, events_tx, running_rx, watching_tx)?;
 
             outputln!(preamble service.service_group(), "Watching {}", USER_CONFIG_FILE);
 
@@ -173,19 +186,6 @@ struct Worker;
 impl Worker {
     // starts a new thread with the file watcher tracking the service's user-config file
     pub fn run(
-        service_path: &Path,
-        have_events: SyncSender<()>,
-        stop_running: Receiver<()>,
-        started_watching: SyncSender<()>,
-    ) -> io::Result<()> {
-        let path = service_path.join(USER_CONFIG_FILE);
-
-        Self::setup_watcher(path, have_events, stop_running, started_watching)?;
-
-        Ok(())
-    }
-
-    fn setup_watcher(
         path: PathBuf,
         have_events: SyncSender<()>,
         stop_running: Receiver<()>,
@@ -281,7 +281,7 @@ mod tests {
         ucm.add(&service).expect("adding service");
         assert!(wait_for_watcher(&ucm, &service));
 
-        File::create(service.path().join(USER_CONFIG_FILE)).expect("creating file");
+        File::create(service.path().get_path().join(USER_CONFIG_FILE)).expect("creating file");
 
         assert!(wait_for_events(&ucm, &service));
     }
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn events_present_after_changing_config() {
         let service = TestService::default();
-        let file_path = service.path().join(USER_CONFIG_FILE);
+        let file_path = service.path().get_path().join(USER_CONFIG_FILE);
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service).expect("adding service");
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn events_present_after_removing_config() {
         let service = TestService::default();
-        let file_path = service.path().join(USER_CONFIG_FILE);
+        let file_path = service.path().get_path().join(USER_CONFIG_FILE);
         let mut ucm = UserConfigWatcher::new();
 
         ucm.add(&service).expect("adding service");
@@ -363,8 +363,8 @@ mod tests {
             &self.name
         }
 
-        fn path(&self) -> &Path {
-            self.path.path()
+        fn path(&self) -> UserConfigPath {
+            UserConfigPath::Recommended(self.path.path().to_path_buf())
         }
 
         fn service_group(&self) -> &ServiceGroup {
