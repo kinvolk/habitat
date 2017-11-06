@@ -67,6 +67,9 @@ struct WorkerState {
     // This receiver is used by the watcher tests to be notified when
     // a worker finished setting up the watcher and is about to
     // starting looping it.
+    //
+    // Silence the dead code warnings from rustc, because it is only
+    // used in tests for synchronization purposes.
     #[allow(dead_code)]
     started_watching: Receiver<()>,
 }
