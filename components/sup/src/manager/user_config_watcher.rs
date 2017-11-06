@@ -15,7 +15,8 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, sync_channel, Sender, SendError, SyncSender, Receiver, TrySendError, TryRecvError};
+use std::sync::mpsc::{channel, sync_channel, Sender, SendError, SyncSender, Receiver,
+                      TrySendError, TryRecvError};
 use std::thread::Builder as ThreadBuilder;
 
 use super::file_watcher::{Callbacks, default_file_watcher_with_no_initial_event};
@@ -49,15 +50,18 @@ impl Serviceable for Service {
 }
 
 
-// WorkerState contains the channels the worker uses to communicate with the Watcher.
+// WorkerState contains the channels the worker uses to communicate
+// with the Watcher.
 struct WorkerState {
-    // This receiver is used by the watcher to be notified when a worker has events.
-    // The channel is a SyncChannel with buffer size 1, as we are only interested in the fact that there were events,
-    // not how many there were.
+    // This receiver is used by the watcher to be notified when a
+    // worker has events.  The channel is a SyncChannel with buffer
+    // size 1, as we are only interested in the fact that there were
+    // events, not how many there were.
     have_events: Receiver<()>,
-    // This sender is used by the watcher to notify a worker to stop running.
-    // It is an async channel because we never want the UserConfigWatcher to block, even if the receiver end of
-    // the channel somehow dies and/or fails to consume the message.
+    // This sender is used by the watcher to notify a worker to stop
+    // running.  It is an async channel because we never want the
+    // UserConfigWatcher to block, even if the receiver end of the
+    // channel somehow dies and/or fails to consume the message.
     stop_running: Sender<()>,
     // This receiver is used by the watcher tests to be notified when
     // a worker finished setting up the watcher and is about to
@@ -192,33 +196,37 @@ impl Worker {
             .spawn(move || {
                 debug!(
                     "UserConfigWatcher({}) worker thread starting",
-                    path.display()
+                    path.display(),
                 );
                 let callbacks = UserConfigCallbacks { have_events: have_events };
-                let mut file_watcher = match default_file_watcher_with_no_initial_event(&path, callbacks) {
-                    Ok(w) => w,
-                    Err(e) => {
-                        outputln!(
-                            "UserConfigWatcher({}) could not start notifier, ending thread ({})",
-                            path.display(),
-                            e
-                        );
-                        return;
-                    }
-                };
+                let mut file_watcher =
+                    match default_file_watcher_with_no_initial_event(&path, callbacks) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            outputln!(
+                                "{}({}) could not start notifier, ending thread ({})",
+                                "UserConfigWatcher",
+                                path.display(),
+                                e,
+                            );
+                            return;
+                        }
+                    };
 
                 let _ = started_watching.try_send(());
 
                 loop {
                     match stop_running.try_recv() {
-                        // As long as the `stop_running` channel is empty, this branch will execute
-                        // on every iteration.
+                        // As long as the `stop_running` channel is
+                        // empty, this branch will execute on every
+                        // iteration.
                         Err(TryRecvError::Empty) => {
                             if let Err(e) = file_watcher.single_iteration() {
                                 outputln!(
-                                    "UserConfigWatcher({}) could not run notifier, ending thread ({})",
+                                    "{}({}) could not run notifier, ending thread ({})",
+                                    "UserConfigWatcher",
                                     path.display(),
-                                    e
+                                    e,
                                 );
                                 return;
                             };
@@ -229,9 +237,12 @@ impl Worker {
 
                         // If the channel is disconnected, we stop as well.
                         Err(TryRecvError::Disconnected) => {
-                            debug!("UserConfigWatcher({}) worker thread failed to receive on channel", path.display());
+                            debug!(
+                                "UserConfigWatcher({}) worker thread failed to receive on channel",
+                                path.display(),
+                            );
                             break;
-                        },
+                        }
                     }
                 }
             })?;
