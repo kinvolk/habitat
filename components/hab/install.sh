@@ -17,7 +17,7 @@
 #
 
 # Fails on unset variables & whenever a command returns a non-zero exit code.
-set -eu
+set -eux
 # If the variable `$DEBUG` is set, then print the shell commands as we execute.
 if [ -n "${DEBUG:-}" ]; then set -x; fi
 
