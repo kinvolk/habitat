@@ -12,10 +12,10 @@ RUN apt-get update -y && \
 
 #source $HOME/.cargo/env
 
-RUN git clone https://github.com/habitat-sh/habitat
+RUN git clone https://github.com/kinvolk/habitat
 
 WORKDIR habitat
-RUN git checkout 0.38.0
+RUN git checkout indradhanush/hab-bldr-dockerfile
 
 RUN echo $PWD
 RUN echo $(ls)
