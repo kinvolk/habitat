@@ -129,12 +129,18 @@ sed -i -e 's/bldr-sessionsrv start$/bldr-sessionsrv start --config \$HOME\/habit
 sed -i -e 's/bldr-worker start$/bldr-worker start --config \$HOME\/habitat\/config_worker.toml/' support/Procfile
 ```
 
+(optionally) you can reduce the amount of logs by specifying an env variable `RUST_LOG` in `support/bldr.env`:
+
+```
+RUST_LOG=debug,postgres=error,habitat_builder_db=error,hyper=error,habitat_builder_router=error,zmq=error,habitat_net=error
+```
+
 ## Run the Builder services
 
 Now run the Habitat Builder.
 
 ```
-sudo -E make bldr-run
+sudo -E PATH=$PATH make bldr-run-no-build
 ```
 
 Then you will probably be able to see that 7 bldr processes in total are
