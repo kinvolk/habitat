@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+set -euo pipefail
+
 export PGPASSWORD
 PGPASSWORD=$(cat /hab/svc/builder-datastore/config/pwfile)
 
@@ -13,7 +15,7 @@ url = "$GITHUB_API_URL"
 web_url = "$GITHUB_WEB_URL"
 client_id = "$GITHUB_CLIENT_ID"
 client_secret = "$GITHUB_CLIENT_SECRET"
-app_id = 5629
+app_id = $GITHUB_APP_ID
 
 [web]
 app_url          = "http://$APP_HOSTNAME"
@@ -38,7 +40,7 @@ url = "$GITHUB_API_URL"
 web_url = "$GITHUB_WEB_URL"
 client_id = "$GITHUB_CLIENT_ID"
 client_secret = "$GITHUB_CLIENT_SECRET"
-app_id = 5629
+app_id = $GITHUB_APP_ID
 EOT
 
 mkdir -p /hab/svc/builder-jobsrv
@@ -340,7 +342,7 @@ early_access_teams = [$GITHUB_ADMIN_TEAM]
 url = "$GITHUB_API_URL"
 client_id = "$GITHUB_CLIENT_ID"
 client_secret = "$GITHUB_CLIENT_SECRET"
-app_id = 5629
+app_id = $GITHUB_APP_ID
 EOT
 
 mkdir -p /hab/svc/builder-worker
@@ -357,5 +359,5 @@ url = "$GITHUB_API_URL"
 web_url = "$GITHUB_WEB_URL"
 client_id = "$GITHUB_CLIENT_ID"
 client_secret = "$GITHUB_CLIENT_SECRET"
-app_id = 5629
+app_id = $GITHUB_APP_ID
 EOT
