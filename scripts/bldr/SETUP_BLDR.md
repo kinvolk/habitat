@@ -12,6 +12,16 @@ It aims at a short introduction to how to build Habitat Builder.
 First of all, please make sure that basic programs are already installed,
 such as git, rust, cargo, etc.
 
+Let's assume that your git repo is supposed to be located under `$HOME/Dev`.
+Make sure that all parent directories of $HOME/Dev have executable bits,
+so that the `hab` user is able to write logs into the habitat repo.
+
+```
+sudo chmod 755 /home
+sudo chmod 755 $HOME
+sudo chmod 755 $HOME/Dev
+```
+
 Clone a git repo under `$HOME/Dev/`.
 
 ```
