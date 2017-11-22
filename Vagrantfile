@@ -11,8 +11,11 @@ Vagrant.configure("2") do |config|
   config.vm.synced_folder "~/.hab/etc", "/hab/etc"
 
   config.vm.network "forwarded_port", guest: 80, host: 9636
-  config.vm.network "forwarded_port", guest: 9631, host: 9631
-  config.vm.network "forwarded_port", guest: 9636, host: 9636
+  config.vm.network "forwarded_port", guest: 9631, host: 9631 # http-gateway
+  config.vm.network "forwarded_port", guest: 9636, host: 9636 # bldr-api
+  config.vm.network "forwarded_port", guest: 3000, host: 3000 # bldr-web (local)
+  config.vm.network "forwarded_port", guest: 3001, host: 3001 # bldr-web (ui)
+  config.vm.network "forwarded_port", guest: 6443, host: 6443 # kube-apiserver
 
   config.vm.provider "virtualbox" do |v|
     v.memory = 4096
