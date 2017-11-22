@@ -167,8 +167,12 @@ cat <<EOF > $HOME/bin/kill-bldr
 #!/bin/bash
 
 for name in api admin router jobsrv sessionsrv originsrv worker; do
-    sudo killall bldr-$name;
+    sudo killall -9 bldr-$name;
 done
+
+sudo killall -9 hab-launch
+sudo killall -9 hab-sup
+sudo killall -9 postmaster
 EOF
 chmod +x $HOME/bin/kill-bldr
 ```
