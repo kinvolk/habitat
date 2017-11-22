@@ -29,6 +29,118 @@ cd $HOME/Dev
 git clone https://github.com/habitat-sh/habitat
 ```
 
+There are two possible versions that you can try: 0.40 (master) and
+0.38 (stable release).
+
+### 0.40 (master, bleeding-edge)
+
+Check out the master branch, which could be unstable for some use cases,
+but it provides definitely better development environments.
+
+```
+cd $HOME/Dev/habitat
+git checkout master
+```
+
+Copy an install script to `/tmp`.
+
+```
+cp components/hab/install.sh /tmp/
+```
+
+Run one of the distro-specific scripts `support/linux/install_dev_0_*.sh`,
+for example choose a centos script, if you run it on Fedora.
+
+```
+sh support/linux/install_dev_0_centos_7.sh
+```
+
+Run also the common Linux scripts.
+
+```
+sh support/linux/install_dev_9_linux.sh
+. ~/.profile
+```
+
+Build Habitat Builder services.
+
+```
+make build-srv
+```
+
+If everything is built without any error, you are ready to run Habitat Builder.
+Before running that though, you also need to generate several config files.
+
+### Generate configs
+
+Prepare a Habitat config directory.
+
+```
+mkdir -p $HOME/habitat
+```
+
+Export the following environment variables:
+Note that the origin and the auth token will vary for each user.
+
+```
+export HAB_AUTH_TOKEN=<your github token>
+export HAB_BLDR_URL=http://localhost:9636
+export HAB_ORIGIN=<your origin>
+```
+
+Habitat configs will be already created under `/hab/svc`.
+In these default `user.toml` files, you need to change `app_id`,
+`client_id`, and `client_secret`.
+
+`/hab/svc/builder-api/user.toml`.
+
+```
+[github]
+client_id = "Iv1.0123456789012345"
+client_secret = "0123456789012345678901234567890123456789"
+app_id = 1234
+```
+
+`/hab/svc/builder-api-proxy/user.toml`.
+
+```
+[github]
+client_id = "Iv1.0123456789012345"
+client_secret = "0123456789012345678901234567890123456789"
+app_id = 1234
+```
+
+`/hab/svc/builder-sessionsrv/user.toml`.
+
+```
+[github]
+client_id = "Iv1.0123456789012345"
+client_secret = "0123456789012345678901234567890123456789"
+app_id = 1234
+```
+
+`/hab/svc/builder-worker/user.toml`.
+Note that `auth_token` needs be the token given to `HAB_AUTH_TOKEN`.
+
+
+```
+auth_token = "" # your github auth token
+auto_publish = true
+
+[github]
+client_id = "Iv1.0123456789012345"
+client_secret = "0123456789012345678901234567890123456789"
+app_id = 1234
+```
+
+(optionally) you can reduce the amount of logs by specifying an env variable `RUST_LOG` in `support/bldr.env`:
+
+```
+RUST_LOG=debug,postgres=error,habitat_builder_db=error,hyper=error,habitat_builder_router=error,zmq=error,habitat_net=error
+```
+
+### 0.38 stable release
+
 Check out the latest stable version, because sometimes the master branch
 can include bugs that prevent you from running Habitat Builder correctly.
 As of 2017-11-15 the latest release is 0.38.0.
