@@ -84,15 +84,36 @@ Note that the origin and the auth token will vary for each user.
 
 ```
 export HAB_AUTH_TOKEN=<your github token>
-export HAB_BLDR_URL=http://localhost:9636
 export HAB_ORIGIN=<your origin>
 ```
 
-Habitat configs will be already created under `/hab/svc`.
-In these default `user.toml` files, you need to change `app_id`,
+#### Github app secrets
+
+You also need to get `app_id`,
 `client_id`, and `client_secret` to your own secrets generated from
 your github account. For details please see
 [Registering github apps](https://developer.github.com/apps/building-integrations/setting-up-and-registering-github-apps/registering-github-apps/).
+
+On your github account page, generate a private key, and save it to
+`$PROJECT_ROOT/.secrets/builder-github-app.pem`.
+
+Set the environment variables.
+
+```
+export GITHUB_CLIENT_ID="Iv1.0123456789012345"
+export GITHUB_CLIENT_SECRET="0123456789012345678901234567890123456789"
+```
+
+Update IDs in `support/builder/config.sh`.
+
+```
+client_id = "$GITHUB_CLIENT_ID"
+client_secret = "$GITHUB_CLIENT_SECRET"
+app_id = 1234
+```
+
+Habitat configs will be already available under `/hab/svc`.
+In these default `user.toml` files.
 For example, change configs like the following:
 
 `/hab/svc/builder-api/user.toml`.
