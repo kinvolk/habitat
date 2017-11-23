@@ -90,7 +90,10 @@ export HAB_ORIGIN=<your origin>
 
 Habitat configs will be already created under `/hab/svc`.
 In these default `user.toml` files, you need to change `app_id`,
-`client_id`, and `client_secret`.
+`client_id`, and `client_secret` to your own secrets generated from
+your github account. For details please see
+[Registering github apps](https://developer.github.com/apps/building-integrations/setting-up-and-registering-github-apps/registering-github-apps/).
+For example, change configs like the following:
 
 `/hab/svc/builder-api/user.toml`.
 
