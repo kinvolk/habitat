@@ -4,6 +4,16 @@ Vagrant setup
 ## Prerequisites
 
 - Get the secrets from https://gist.github.com/indradhanush/184f19d26ff96ff537e336dd13c63c64 and place them under `$PROJECT_ROOT/.secrets/`
+- You need to update `components/builder-web/habitat.conf.js` to include the following lines:
+
+```
+    github_client_id: "Iv1.62694049addd0336",
+    github_app_id: "6930",
+```
+
+- You need to set up the "User authorization callback URL" to
+  `http://localhost:3000/sign-in`. on
+  [Github apps](https://github.com/settings/apps).
 
 ## One step
 
