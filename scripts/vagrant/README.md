@@ -3,30 +3,7 @@ Vagrant setup
 
 ## Prerequisites
 
-- [Create a Github app](https://github.com/settings/apps) and download the private key from the app's page.
-- Put it under `$PROJECT_ROOT/.secrets/builder-github-app.pem`
-- Create a new file at `$PROJECT_ROOT/.secrets/habitat-env` and write the following into it:
-
-```
-export APP_HOSTNAME=localhost:3000
-
-export GITHUB_API_URL=https://api.github.com
-export GITHUB_WEB_URL=https://github.com
-
-export GITHUB_APP_ID=""
-
-export GITHUB_CLIENT_ID=""
-export GITHUB_CLIENT_SECRET=""
-
-export WORKER_AUTH_TOKEN=""
-
-export GITHUB_ADMIN_TEAM=""
-export GITHUB_WORKER_TEAM=""
-
-export GITHUB_WEBHOOK_SECRET=""
-```
-
-- Ask a cowrecker for secrets (easy). Or generate your own (painful).
+- Get the secrets from https://gist.github.com/indradhanush/184f19d26ff96ff537e336dd13c63c64 and place them under `$PROJECT_ROOT/.secrets/`
 
 ## One step
 
