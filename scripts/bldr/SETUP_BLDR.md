@@ -308,6 +308,7 @@ done
 
 sudo killall -9 hab-launch
 sudo killall -9 hab-sup
+sudo killall -9 lite-server
 sudo killall -9 postmaster
 EOF
 chmod +x $HOME/bin/kill-bldr
