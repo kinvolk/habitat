@@ -66,3 +66,4 @@ Try running the http examples shown in [BUILDER_DEV.md](../../BUILDER_DEV.md)
 ## Troubleshooting
 
 - Logs are very verbose by default. Remove `RUST_LOG=debug,` from `support/bldr.env` to suppress `DEBUG` logs.
+- Please make sure that the web interface daemon `lite-server` is running. If not, try to run `support/builder_web.sh`
