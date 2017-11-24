@@ -1,56 +1,53 @@
-Vagrant setup
-===
+# Vagrant setup
 
 ## Prerequisites
 
-- Get the secrets from https://gist.github.com/indradhanush/184f19d26ff96ff537e336dd13c63c64 and place them under `$PROJECT_ROOT/.secrets/`
-- You need to update `components/builder-web/habitat.conf.js` to include the following lines:
+Get the secrets from Michael (private URL) and place them under
+`$PROJECT_ROOT/.secrets/`. You should have two files there:
 
 ```
-    github_client_id: "Iv1.62694049addd0336",
-    github_app_id: "6930",
+ls .secrets/
+builder-github-app.pem  habitat-env
 ```
 
-- You need to set up the "User authorization callback URL" to
-  `http://localhost:3000/sign-in`. on
-  [Github apps](https://github.com/settings/apps).
+You need to update `components/builder-web/habitat.conf.sample.js` with the
+`github_client_id` and `github_app_id` from the `.secrets/habitat-env` file
+above.
 
-## One step
+To avoid a cached "bad" `habitat.conf.js` file, delete it:
 
-This is fragile. Recommended to go manual at the moment.
-`./scripts/vagrant/setup.sh`
+```
+rm components/builder-web/habitat.conf.js
+```
 
-## Manual
+## Setup
 
 From project root run:
 
-`vagrant destroy -f && vagrant up && vagrant ssh`
-
-### Inside vagrant:
-
 ```
-hab origin key generate <your-origin-name>
-sudo su -
-direnv allow
-cd /src
-make build-bin build-srv
-```
-
-## Running bldr
-
-```
+vagrant destroy -f
+vagrant up
 vagrant ssh
+```
+
+Then, in the VM:
+
+```
 sudo su -
+tmux # if you want :)
 cd /src
-direnv allow
+direnv allow .
+make build-bin build-srv
+[...]
 make bldr-run-no-build
 ```
 
-## Testing the setup
-
-Try running the http examples shown in [BUILDER_DEV.md](../../BUILDER_DEV.md)
+Now go to http://localhost:3000/#/pkgs and click Sign-in. You should be
+redirected to GitHub and asked if you allow the `habitat-dev-local`
+GitHub app. You should be redirected to Habitat Builder (i.e. localhost:3000)
+and be logged-in.
 
 ## Troubleshooting
 
-- Logs are very verbose by default. Remove `RUST_LOG=debug,` from `support/bldr.env` to suppress `DEBUG` logs.
-- Please make sure that the web interface daemon `lite-server` is running. If not, try to run `support/builder_web.sh`
+* Logs are very verbose by default. Remove `RUST_LOG=debug,` from
+  `support/bldr.env` to suppress `DEBUG` logs.
