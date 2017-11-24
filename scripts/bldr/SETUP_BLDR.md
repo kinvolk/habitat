@@ -310,6 +310,12 @@ sudo killall -9 hab-launch
 sudo killall -9 hab-sup
 sudo killall -9 lite-server
 sudo killall -9 postmaster
+
+SRC_NM_DIR=/src/components/builder-web/node_modules
+sudo mountpoint -q $SRC_NM_DIR && sudo umount $SRC_NM_DIR
+
+HOME_NM_DIR=$HOME/.builder_web_node_modules
+sudo mountpoint -q $HOME_NM_DIR && sudo umount $HOME_NM_DIR
 EOF
 chmod +x $HOME/bin/kill-bldr
 ```
