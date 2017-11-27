@@ -32,7 +32,7 @@ static LOGKEY: &'static str = "UCW";
 // requires a lot of ceremony, so we work around this with this trait.
 pub trait Serviceable {
     fn name(&self) -> &str;
-    fn path(&self) -> &UserConfigPath;
+    fn user_config_path(&self) -> &UserConfigPath;
     fn service_group(&self) -> &ServiceGroup;
 }
 
@@ -41,7 +41,7 @@ impl Serviceable for Service {
         &self.pkg.name
     }
 
-    fn path(&self) -> &UserConfigPath {
+    fn user_config_path(&self) -> &UserConfigPath {
         &self.cfg.user_config_path
     }
 
@@ -89,7 +89,7 @@ impl UserConfigWatcher {
         // It isn't possible to use the `or_insert_with` function here because it can't have a
         // return value, which we need to return the error from `Worker::run`.
         if self.states.get(service.name()).is_none() {
-            let user_toml_path = match service.path() {
+            let user_toml_path = match service.user_config_path() {
                 &UserConfigPath::Recommended(ref p) => p.join(USER_CONFIG_FILE),
                 &UserConfigPath::Deprecated(ref p) => {
                     outputln!(
