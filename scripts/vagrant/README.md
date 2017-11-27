@@ -21,6 +21,20 @@ To avoid a cached "bad" `habitat.conf.js` file, delete it:
 rm components/builder-web/habitat.conf.js
 ```
 
+Set the following env variables:
+
+```
+export HAB_AUTH_TOKEN=<your github auth token>
+export HAB_ORIGIN=<your origin>
+```
+
+The two variables can be different for each user.
+Make sure that your github auth token has the following permissions,
+to avoid errors like `401 unauthorized`.
+
+* user:email
+* read:org
+
 ## Setup
 
 From project root run:
