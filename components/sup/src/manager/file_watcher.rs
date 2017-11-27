@@ -1244,7 +1244,7 @@ impl<C: Callbacks, W: Watcher> FileWatcher<C, W> {
     ///
     /// This will create an instance of `W` and start watching the
     /// paths. When looping the file watcher, it will not emit any
-    /// initial "file appeared" event even the watched file existed
+    /// initial "file appeared" event even if the watched file existed
     /// when the file watcher was created.
     ///
     /// Will return `Error::NotifyCreateError` if creating the watcher
