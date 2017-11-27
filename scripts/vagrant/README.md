@@ -12,7 +12,8 @@ builder-github-app.pem  habitat-env
 
 You need to update `components/builder-web/habitat.conf.sample.js` with the
 `github_client_id` and `github_app_id` from the `.secrets/habitat-env` file
-above.
+above. You also need to set the `github_app_url` to
+`https://github.com/apps/habitat-dev-local`.
 
 To avoid a cached "bad" `habitat.conf.js` file, delete it:
 
