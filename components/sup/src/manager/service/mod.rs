@@ -437,10 +437,12 @@ impl Service {
                 let needs_reconfigure = self.compile_configuration(&ctx);
 
                 (config_changed, needs_reload, needs_reconfigure)
-            } else if self.user_config_updated {
-                (true, true, self.compile_configuration(&ctx))
             } else {
-                (false, self.needs_reload, self.needs_reconfiguration)
+                (
+                    self.user_config_updated,
+                    self.user_config_updated,
+                    self.compile_configuration(&ctx),
+                )
             }
         };
 
