@@ -76,7 +76,7 @@ Second, for each required package, download it from upstream Habitat Builder
 instance. Example for `core/hab-backline`, which is always needed:
 
 ```
-test -z "$HAB_ORIGIN" || echo "\$HAB_BLDR_URL is set, unset if first"
+test -z "$HAB_ORIGIN" || echo "\$HAB_BLDR_URL is set, unset it first"
 hab pkg install core/hab-backline
 # `load_package` is a helper function that should be available
 # in your vagrant box. You can check with `type load_package`.
@@ -88,6 +88,14 @@ load_package /hab/cache/artifacts/core-hab-backline-0.40.0-20171128175957-x86_64
 Now, trigger a new build. For a package with no dependencies, above should
 be enough. Otherwise, repeat the process for every package reported
 missing during the build.
+
+If the build fails due to a missing public key, make sure you have both
+a public and a private key in the `/home/krangschnak/.hab/cache/keys/`
+directory, e.g.
+
+```
+cp /hab/cache/keys/foo-20171103084851.* /home/krangschnak/.hab/cache/keys/
+```
 
 ## Troubleshooting
 
