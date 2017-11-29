@@ -35,6 +35,10 @@ to avoid errors like `401 unauthorized`.
 * user:email
 * read:org
 
+Please make sure that the system clock is set correctly, e.g. by running ntpd.
+When the time is drifted a lot, github could reject requests so that hab-bldr
+cannot continue to do anything at all.
+
 ## Setup
 
 From project root run:
@@ -99,3 +103,9 @@ cp /hab/cache/keys/foo-20171103084851.* /home/krangschnak/.hab/cache/keys/
 
 * Logs are very verbose by default. Remove `RUST_LOG=debug,` from
   `support/bldr.env` to suppress `DEBUG` logs.
+* In the bldr log, please ignore messages like below. This message shows up
+  no matter whether the authentication succeeded or not:
+
+```
+sessionsrv.1 | WARN:habitat_builder_sessionsrv::server::handlers: Failed to obtain installation token, GitHub App Authentication error, message=Not Found, documentation_url=https://developer.github.com/v3/apps/#create-a-new-installation-token
+```
