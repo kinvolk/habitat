@@ -62,6 +62,33 @@ redirected to GitHub and asked if you allow the `habitat-dev-local`
 GitHub app. You should be redirected to Habitat Builder (i.e. localhost:3000)
 and be logged-in.
 
+You should now be able to connect a plan from GitHub.
+
+## Building a package
+
+To be able to build a package, your Vagrant instance needs to provide the
+required `core/...` packages.
+
+First, create an origin `core` for that.
+
+Second, for each required package, download it from upstream Habitat Builder
+(or build it yourself, if necessary) and upload the package to your local
+instance. Example for `core/hab-backline`, which is always needed:
+
+```
+test -z "$HAB_ORIGIN" || echo "\$HAB_BLDR_URL is set, unset if first"
+hab pkg install core/hab-backline
+# `load_package` is a helper function that should be available
+# in your vagrant box. You can check with `type load_package`.
+load_package /hab/cache/artifacts/core-hab-backline-0.40.0-20171128175957-x86_64-linux.hart
+# ... The package + all dependencies will be uploaded to your *local*
+# core origin
+```
+
+Now, trigger a new build. For a package with no dependencies, above should
+be enough. Otherwise, repeat the process for every package reported
+missing during the build.
+
 ## Troubleshooting
 
 * Logs are very verbose by default. Remove `RUST_LOG=debug,` from
