@@ -76,11 +76,9 @@ Second, for each required package, download it from upstream Habitat Builder
 instance. Example for `core/hab-backline`, which is always needed:
 
 ```
-test -z "$HAB_ORIGIN" || echo "\$HAB_BLDR_URL is set, unset it first"
+test -z "$HAB_BLDR_URL" || echo "\$HAB_BLDR_URL is set, unset it first"
 hab pkg install core/hab-backline
-# `load_package` is a helper function that should be available
-# in your vagrant box. You can check with `type load_package`.
-load_package /hab/cache/artifacts/core-hab-backline-0.40.0-20171128175957-x86_64-linux.hart
+hab pkg upload --url http://localhost:9636/v1 --auth "${HAB_AUTH_TOKEN}" "/hab/cache/artifacts/core-hab-backline-0.40.0-20171128175957-x86_64-linux.hart" --channel stable
 # ... The package + all dependencies will be uploaded to your *local*
 # core origin
 ```
