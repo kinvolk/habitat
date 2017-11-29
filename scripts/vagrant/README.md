@@ -96,6 +96,7 @@ a public and a private key in the `/home/krangschnak/.hab/cache/keys/`
 directory, e.g.
 
 ```
+mkdir --parent /home/krangschnak/.hab/cache/keys
 cp /hab/cache/keys/foo-20171103084851.* /home/krangschnak/.hab/cache/keys/
 ```
 
