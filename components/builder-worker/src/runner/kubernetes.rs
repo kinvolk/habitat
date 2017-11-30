@@ -26,10 +26,11 @@ use runner::workspace::Workspace;
 
 lazy_static! {
     /// Absolute path to the Docker exporter program
-    static ref KUBERNETES_EXPORTER_PROGRAM: PathBuf = hfs::resolve_cmd_in_pkg(
-        "hab-pkg-export-kubernetes",
-        include_str!(concat!(env!("OUT_DIR"), "/KUBERNETES_EXPORTER_PKG_IDENT")),
-    );
+    static ref KUBERNETES_EXPORTER_PROGRAM: PathBuf = PathBuf::from("/src/target/debug/hab-pkg-export-kubernetes");
+    // static ref KUBERNETES_EXPORTER_PROGRAM: PathBuf = hfs::resolve_cmd_in_pkg(
+    //     "hab-pkg-export-kubernetes",
+    //     include_str!(concat!(env!("OUT_DIR"), "/KUBERNETES_EXPORTER_PKG_IDENT")),
+    // );
 }
 
 pub struct KubernetesExporter<'a> {
