@@ -32,7 +32,13 @@ lazy_static! {
     );
 }
 
+pub struct KubernetesExporterSpec {
+    pub kubeconfig: String,
+    pub replicas: i32,
+}
+
 pub struct KubernetesExporter<'a> {
+    spec: KubernetesExporterSpec,
     workspace: &'a Workspace,
     bldr_url: &'a str,
 }
@@ -41,6 +47,10 @@ impl<'a> KubernetesExporter<'a> {
     /// Creates a new Kubernetes exporter for a given `Workspace` and Builder URL.
     pub fn new(workspace: &'a Workspace, bldr_url: &'a str) -> Self {
         KubernetesExporter {
+            spec: KubernetesExporterSpec {
+                kubeconfig: String::from("/opt/kubeconfig"),
+                replicas: 1,
+            },
             workspace: workspace,
             bldr_url: bldr_url,
         }
@@ -96,6 +106,8 @@ impl<'a> KubernetesExporter<'a> {
     fn apply_to_cluster(&self, exporter: Child, log_pipe: &mut LogPipe) -> Result<ExitStatus> {
 
         let mut cmd = Command::new("/usr/local/bin/kubectl");
+        cmd.arg("--kubeconfig");
+        cmd.arg(&self.spec.kubeconfig);
         cmd.arg("apply");
         cmd.arg("-f");
         cmd.arg("-");
