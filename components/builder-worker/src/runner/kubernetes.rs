@@ -33,8 +33,13 @@ lazy_static! {
     // );
 }
 
+pub struct KubernetesExporterSpec {
+    pub kubeconfig: String,
+    pub replicas: i32,
+}
+
 pub struct KubernetesExporter<'a> {
-    // spec: DockerExporterSpec,
+    spec: KubernetesExporterSpec,
     workspace: &'a Workspace,
     bldr_url: &'a str,
 }
@@ -43,6 +48,10 @@ impl<'a> KubernetesExporter<'a> {
     /// Creates a new Kubernetes exporter for a given `Workspace` and Builder URL.
     pub fn new(workspace: &'a Workspace, bldr_url: &'a str) -> Self {
         KubernetesExporter {
+            spec: KubernetesExporterSpec{
+                kubeconfig: String::from("/opt/kubeconfig"),
+                replicas: 1,
+            },
             workspace: workspace,
             bldr_url: bldr_url,
         }
@@ -70,9 +79,10 @@ impl<'a> KubernetesExporter<'a> {
         let mut cmd = Command::new(&*KUBERNETES_EXPORTER_PROGRAM);
         cmd.current_dir(self.workspace.root());
 
-        cmd.arg("--url");
-        cmd.arg(&self.bldr_url);
-
+        cmd.arg("--count");
+        cmd.arg(format!("{}", self.spec.replicas));
+        cmd.arg("--output");
+        cmd.arg("-");
         cmd.arg(self.workspace.job.get_project().get_name()); // Locally built artifact
 
         debug!("building kubernetes export command, cmd={}",
@@ -93,8 +103,19 @@ impl<'a> KubernetesExporter<'a> {
     fn apply_to_cluster(&self, exporter: Child, _log_pipe: &mut LogPipe) -> Result<ExitStatus> {
 
         let mut cmd = Command::new("/usr/local/bin/kubectl");
+        cmd.arg("--kubeconfig");
+        cmd.arg(&self.spec.kubeconfig);
         cmd.arg("apply");
-        cmd.arg("-f -");
+        cmd.arg("-f");
+        cmd.arg("-");
+
+        debug!("building kubectl command, cmd={:?}", &cmd);
+        cmd.env_clear();
+        if let Some(_) = env::var_os(RUNNER_DEBUG_ENVVAR) {
+            cmd.env("RUST_LOG", "debug");
+        }
+        cmd.env(NONINTERACTIVE_ENVVAR, "true"); // Disables progress bars
+        cmd.env("TERM", "xterm-256color"); // Emits ANSI color codes
 
         cmd.stdin(exporter.stdout.unwrap());
         cmd.stdout(Stdio::piped());
@@ -104,7 +125,7 @@ impl<'a> KubernetesExporter<'a> {
         let mut child = cmd.spawn().map_err(Error::Exporter)?;
         // log_pipe.pipe(&mut child)?;
         let exit_status = child.wait().map_err(Error::Exporter)?;
-        debug!("applyied manifest to cluster, status={:?}", exit_status);
+        debug!("deploying to cluster, status={:?}", exit_status);
         Ok(exit_status)
     }
 }
