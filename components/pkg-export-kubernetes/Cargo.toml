@@ -18,6 +18,7 @@ habitat_common = { path = "../common" }
 habitat_pkg_export_docker = { path = "../pkg-export-docker" }
 handlebars = { version = "*", default-features = false }
 log = "*"
+rand = "*"
 serde = "1.0.2"
 serde_json = "1.0.0"
 failure = "0.1"

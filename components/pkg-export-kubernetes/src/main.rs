@@ -18,6 +18,7 @@ extern crate habitat_core as hcore;
 extern crate habitat_common as common;
 extern crate habitat_pkg_export_docker as export_docker;
 extern crate handlebars;
+extern crate rand;
 #[macro_use]
 extern crate serde_json;
 #[macro_use]
@@ -43,6 +44,7 @@ use hcore::url as hurl;
 use hcore::env as henv;
 use hcore::package::{PackageArchive, PackageIdent};
 use common::ui::{Coloring, UI, NOCOLORING_ENVVAR, NONINTERACTIVE_ENVVAR};
+use rand::Rng;
 
 use export_docker::{Cli, Credentials, BuildSpec, Naming, Result};
 
@@ -145,9 +147,20 @@ fn gen_k8s_manifest(_ui: &mut UI, matches: &clap::ArgMatches) -> Result<()> {
         None => pkg_ident.origin + "/" + &pkg_ident.name,
     };
     let bind = matches.value_of("BIND");
+    // To allow multiple instances of Habitat application in Kubernetes,
+    // random suffix in metadata_name is needed.
+    let metadata_name = format!(
+        "{}-{}",
+        pkg_ident.name,
+        rand::thread_rng()
+            .gen_ascii_chars()
+            .take(5)
+            .collect::<String>()
+    );
 
     let json = json!({
-        "metadata_name": pkg_ident.name,
+        "metadata_name": metadata_name,
+        "habitat_name": pkg_ident.name,
         "image": image,
         "count": count,
         "service_topology": topology,
