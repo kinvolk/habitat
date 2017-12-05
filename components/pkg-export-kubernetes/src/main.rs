@@ -79,6 +79,7 @@ fn start(_ui: &mut UI) -> result::Result<(), String> {
     let count = m.value_of("COUNT").unwrap_or("1");
     let topology = m.value_of("TOPOLOGY").unwrap_or("standalone");
     let group = m.value_of("GROUP");
+    let channel = m.value_of("CHANNEL");
     let config_secret_name = m.value_of("CONFIG_SECRET_NAME");
     let ring_secret_name = m.value_of("RING_SECRET_NAME");
     // clap_app!() ensures that we do have the mandatory args so unwrap() is fine here
@@ -100,6 +101,7 @@ fn start(_ui: &mut UI) -> result::Result<(), String> {
         "habitat_name": pkg_ident.name,
         "image": image,
         "count": count,
+        "channel": channel,
         "service_topology": topology,
         "service_group": group,
         "config_secret_name": config_secret_name,
@@ -153,6 +155,8 @@ fn cli<'a, 'b>() -> App<'a, 'b> {
         (@arg GROUP: -g --("service-group") +takes_value
             "group is a logical grouping of services with the same package and \
              topology type connected together in a ring (default: default)")
+        (@arg CHANNEL: -c --("channel") +takes_value
+            "")
         (@arg CONFIG_SECRET_NAME: -n --("config-secret-name") +takes_value
             "name of the Kubernetes Secret containing the config file - \
              user.toml - that the user has previously created. Habitat will \
