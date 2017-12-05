@@ -163,6 +163,7 @@ fn gen_k8s_manifest(_ui: &mut UI, matches: &clap::ArgMatches) -> Result<()> {
         "habitat_name": pkg_ident.name,
         "image": image,
         "count": count,
+        "channel": channel,
         "service_topology": topology,
         "service_group": group,
         "config_secret_name": config_secret_name,
@@ -292,6 +293,14 @@ fn cli<'a, 'b>() -> App<'a, 'b> {
                 .help(
                     "Disable creation of the Docker image and only create a Kubernetes manifest",
                 ),
+        )
+        .arg(
+            Arg::with_name("CHANNEL")
+                .value_name("CHANNEL")
+                .long("channel")
+                .short("c")
+                .multiple(false)
+                .help("Specify the channel to use in the manifest (defaults to 'unstable')")
         )
         .arg(
             Arg::with_name("PKG_IDENT_OR_ARTIFACT")
