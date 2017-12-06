@@ -157,6 +157,10 @@ fn gen_k8s_manifest(_ui: &mut UI, matches: &clap::ArgMatches) -> Result<()> {
             .take(5)
             .collect::<String>()
     );
+    let metadata_name = format!("{}-{}{}", pkg_ident.name, rand::thread_rng()
+        .gen_ascii_chars()
+        .take(4)
+        .collect::<String>(), rand::thread_rng().gen_range(b'a', b'z'));
 
     let json = json!({
         "metadata_name": metadata_name,
