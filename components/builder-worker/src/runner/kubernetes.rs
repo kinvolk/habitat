@@ -26,7 +26,8 @@ use runner::workspace::Workspace;
 
 lazy_static! {
     /// Absolute path to the Docker exporter program
-    static ref KUBERNETES_EXPORTER_PROGRAM: PathBuf = PathBuf::from("/src/target/debug/hab-pkg-export-kubernetes");
+    static ref KUBERNETES_EXPORTER_PROGRAM: PathBuf =
+        PathBuf::from("/src/target/debug/hab-pkg-export-kubernetes");
     // static ref KUBERNETES_EXPORTER_PROGRAM: PathBuf = hfs::resolve_cmd_in_pkg(
     //     "hab-pkg-export-kubernetes",
     //     include_str!(concat!(env!("OUT_DIR"), "/KUBERNETES_EXPORTER_PKG_IDENT")),
@@ -48,7 +49,7 @@ impl<'a> KubernetesExporter<'a> {
     /// Creates a new Kubernetes exporter for a given `Workspace` and Builder URL.
     pub fn new(workspace: &'a Workspace, bldr_url: &'a str) -> Self {
         KubernetesExporter {
-            spec: KubernetesExporterSpec{
+            spec: KubernetesExporterSpec {
                 kubeconfig: String::from("/opt/kubeconfig"),
                 replicas: 1,
             },
