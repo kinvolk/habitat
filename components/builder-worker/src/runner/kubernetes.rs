@@ -103,7 +103,7 @@ impl<'a> KubernetesExporter<'a> {
         cmd.spawn()
     }
 
-    fn apply_to_cluster(&self, exporter: Child, _log_pipe: &mut LogPipe) -> Result<ExitStatus> {
+    fn apply_to_cluster(&self, exporter: Child, log_pipe: &mut LogPipe) -> Result<ExitStatus> {
 
         let mut cmd = Command::new("/usr/local/bin/kubectl");
         cmd.arg("--kubeconfig");
@@ -126,7 +126,7 @@ impl<'a> KubernetesExporter<'a> {
 
         debug!("spawning kubectl command");
         let mut child = cmd.spawn().map_err(Error::Exporter)?;
-        // log_pipe.pipe(&mut child)?;
+        log_pipe.pipe(&mut child)?;
         let exit_status = child.wait().map_err(Error::Exporter)?;
         debug!("deploying to cluster, status={:?}", exit_status);
         Ok(exit_status)
