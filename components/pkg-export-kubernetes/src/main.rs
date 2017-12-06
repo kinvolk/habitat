@@ -90,14 +90,10 @@ fn start(_ui: &mut UI) -> result::Result<(), String> {
     };
     // To allow multiple instances of Habitat application in Kubernetes,
     // random suffix in metadata_name is needed.
-    let metadata_name = format!(
-        "{}-{}",
-        pkg_ident.name,
-        rand::thread_rng()
-            .gen_ascii_chars()
-            .take(5)
-            .collect::<String>()
-    );
+    let metadata_name = format!("{}-{}{}", pkg_ident.name, rand::thread_rng()
+        .gen_ascii_chars()
+        .take(4)
+        .collect::<String>(), rand::thread_rng().gen_range(b'a', b'z'));
     let image = m.value_of("IMAGE").unwrap_or(pkg_ident_str);
 
     let json = json!({
