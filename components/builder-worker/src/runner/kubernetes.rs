@@ -82,6 +82,8 @@ impl<'a> KubernetesExporter<'a> {
 
         cmd.arg("--count");
         cmd.arg(format!("{}", self.spec.replicas));
+        cmd.arg("--channel");
+        cmd.arg("unstable");
         cmd.arg("--output");
         cmd.arg("-");
         cmd.arg(self.workspace.job.get_project().get_name()); // Locally built artifact
