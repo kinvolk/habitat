@@ -115,7 +115,12 @@ GitHub, etc.
 To be able to build a package, your Vagrant instance needs to provide the
 required `core/...` packages (since it's an independent Habitat instance).
 
-First, create an origin `core` for that.
+First, create an origin `core` for that. You can do that from the CLI:
+
+```
+$ origin
+# creates the core origin via a call to the API
+```
 
 Second, for each required package, download it from upstream Habitat Builder
 (or build it yourself, if necessary) and upload the package to your local
@@ -123,9 +128,15 @@ instance. Make sure `$HAB_BLDR_URL` is **not** set in order to install from
 upstream. Example for `core/hab-backline`, which is always needed:
 
 ```
+mkdir /src/pkgs
 test -z "$HAB_BLDR_URL" || echo "\$HAB_BLDR_URL is set, unset it first"
-hab pkg install core/hab-backline
-hab pkg upload --url http://localhost:9636/v1 --auth "${HAB_AUTH_TOKEN}" "/hab/cache/artifacts/core-hab-backline-0.40.0-20171128175957-x86_64-linux.hart" --channel stable
+hab pkg install core/hab-backline core/hab-launcher core/hab-sup core/elasticsearch core/docker core/hab-pkg-export-docker core/hab-pkg-export-kubernetes
+load_package "/hab/cache/artifacts/core-hab-backline-*.hart"
+load_package "/hab/cache/artifacts/core-hab-launcher-*.hart"
+load_package "/hab/cache/artifacts/core-hab-sup-*.hart"
+load_package "/hab/cache/artifacts/core-elasticsearch-*.hart"
+load_package "/hab/cache/artifacts/core-docker-*.hart"
+load_package "/hab/cache/artifacts/core-hab-pkg-export-*.hart"
 # The package + all dependencies will be uploaded to your *local*
 # core origin
 ```
