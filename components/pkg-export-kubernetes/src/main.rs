@@ -79,7 +79,7 @@ fn start(_ui: &mut UI) -> result::Result<(), String> {
     let count = m.value_of("COUNT").unwrap_or("1");
     let topology = m.value_of("TOPOLOGY").unwrap_or("standalone");
     let group = m.value_of("GROUP");
-    let channel = m.value_of("CHANNEL");
+    let channel = m.value_of("CHANNEL").unwrap_or("unstable");
     let config_secret_name = m.value_of("CONFIG_SECRET_NAME");
     let ring_secret_name = m.value_of("RING_SECRET_NAME");
     // clap_app!() ensures that we do have the mandatory args so unwrap() is fine here
