@@ -146,6 +146,28 @@ impl Member {
             }
         }
     }
+
+    fn parse_uuid(input: &str) -> Uuid {
+        match Uuid::parse_str(input) {
+            Ok(u) => u,
+            Err(e) => {
+                error!(
+                    "Member from ProtoMember: cannot parse zone ID: {}, {}",
+                    input,
+                    e
+                );
+                Uuid::nil()
+            }
+        }
+    }
+
+    pub fn zone_id(&self) -> Uuid {
+        Self::parse_uuid(self.proto.get_zone_id())
+    }
+
+    pub fn set_zone_id(&mut self, zone_id: Uuid) {
+        self.proto.set_zone_id(zone_id.simple().to_string());
+    }
 }
 
 impl Default for Member {
@@ -153,6 +175,7 @@ impl Default for Member {
         let mut proto_member = ProtoMember::new();
         proto_member.set_id(Uuid::new_v4().simple().to_string());
         proto_member.set_incarnation(0);
+        proto_member.set_zone_id(Uuid::nil().simple().to_string());
         Member { proto: proto_member }
     }
 }

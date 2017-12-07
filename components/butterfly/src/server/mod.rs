@@ -45,6 +45,7 @@ use habitat_core::service::ServiceGroup;
 use habitat_core::crypto::SymKey;
 use serde::{Serialize, Serializer};
 use serde::ser::SerializeStruct;
+use uuid::Uuid;
 
 use error::{Result, Error};
 use member::{Member, Health, MemberList};
@@ -435,6 +436,7 @@ impl Server {
         // for now.
         let trace_member_id = String::from(member.get_id());
         let trace_incarnation = member.get_incarnation();
+        let trace_zone_id = String::from(member.get_zone_id());
         let trace_health = health.clone();
         if self.member_list.insert(member, health) {
             trace_it!(
@@ -442,6 +444,7 @@ impl Server {
                 TraceKind::MemberUpdate,
                 trace_member_id,
                 trace_incarnation,
+                trace_zone_id,
                 trace_health
             );
             self.rumor_heat.start_hot_rumor(rk);
@@ -456,6 +459,7 @@ impl Server {
         // for now.
         let trace_member_id = String::from(member.get_id());
         let trace_incarnation = member.get_incarnation();
+        let trace_zone_id = String::from(member.get_zone_id());
         let trace_health = health.clone();
         if self.member_list.insert_health(member, health) {
             trace_it!(
@@ -463,9 +467,35 @@ impl Server {
                 TraceKind::MemberUpdate,
                 trace_member_id,
                 trace_incarnation,
+                trace_zone_id,
                 trace_health
             );
             self.rumor_heat.start_hot_rumor(rk);
+        }
+    }
+
+    pub fn override_zone_id(&self, zone_id: Uuid)
+    {
+        let mut me = self.member.write().expect("Member lock is poisoned");
+        me.set_zone_id(Uuid::nil());
+        Self::setup_zone_id(&mut me, Some(zone_id));
+    }
+
+    pub fn settle_zone_id(&self, zone_id: Option<Uuid>) {
+        let mut me = self.member.write().expect("Member lock is poisoned");
+        Self::setup_zone_id(&mut me, zone_id);
+    }
+
+    fn setup_zone_id(member: &mut Member, zone_id: Option<Uuid>) {
+        if member.zone_id().is_nil() {
+            let new_zone_id = match zone_id {
+                Some(id) => id,
+                None => Uuid::new_v4(),
+            };
+            member.set_zone_id (new_zone_id);
+            let mut incarnation = member.get_incarnation();
+            incarnation += 1;
+            member.set_incarnation(incarnation);
         }
     }
 
@@ -483,6 +513,7 @@ impl Server {
             };
             let trace_member_id = String::from(member.get_id());
             let trace_incarnation = member.get_incarnation();
+            let trace_zone_id = String::from(member.get_zone_id());
             self.member_list.insert_health_by_id(
                 member.get_id(),
                 Health::Departed,
@@ -492,6 +523,7 @@ impl Server {
                 TraceKind::MemberUpdate,
                 trace_member_id,
                 trace_incarnation,
+                trace_zone_id,
                 Health::Departed
             );
 
@@ -525,6 +557,7 @@ impl Server {
         // for now.
         let trace_member_id = String::from(member.get_id());
         let trace_incarnation = member.get_incarnation();
+        let trace_zone_id = String::from(member.get_zone_id());
         let trace_health = health.clone();
 
         if self.member_list.insert(member, health) || incremented_incarnation {
@@ -533,6 +566,7 @@ impl Server {
                 TraceKind::MemberUpdate,
                 trace_member_id,
                 trace_incarnation,
+                trace_zone_id,
                 trace_health
             );
             self.rumor_heat.start_hot_rumor(rk);

@@ -277,7 +277,7 @@ macro_rules! trace_it {
         }
     };
 
-    (MEMBERSHIP: $server:expr, $msg_type:expr, $member_id:expr, $mem_incar:expr, $health:expr) => {
+    (MEMBERSHIP: $server:expr, $msg_type:expr, $member_id:expr, $mem_incar:expr, $zone_id:expr, $health:expr) => {
         {
             let trace_on = $server.trace.read().expect("Trace lock is poisoned").on();
             if trace_on {
@@ -288,7 +288,7 @@ macro_rules! trace_it {
                 let thread_name = thread.name().unwrap_or("undefined");
                 let member_id = $server.member_id();
                 let server_name = $server.name();
-                let rumor_text = format!("{}-{}-{}", $member_id, $mem_incar, $health);
+                let rumor_text = format!("{}-{}-{}-{}", $member_id, $mem_incar, $zone_id, $health);
 
                 let mut tw = TraceWrite::new($msg_type, module_path!(), line!(), thread_name);
                 tw.server_name = Some(&server_name);
@@ -340,9 +340,10 @@ macro_rules! trace_it {
                 let server_name = $server.name();
                 let mut swim_str = String::new();
                 for m_string in $payload.get_membership()
-                        .iter().map(|m| format!("{}-{}-{:?} ",
+                        .iter().map(|m| format!("{}-{}-{}-{:?} ",
                                                 m.get_member().get_id(),
                                                 m.get_member().get_incarnation(),
+                                                m.get_member().get_zone_id(),
                                                 m.get_health())) {
                     swim_str.push_str(&format!("{} ", &m_string)[..]);
                 }

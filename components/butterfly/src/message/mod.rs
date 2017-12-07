@@ -75,7 +75,7 @@ impl Serialize for swim::Member {
     where
         S: Serializer,
     {
-        let mut strukt = serializer.serialize_struct("member", 6)?;
+        let mut strukt = serializer.serialize_struct("member", 7)?;
         strukt.serialize_field("id", self.get_id())?;
         strukt.serialize_field(
             "incarnation",
@@ -88,6 +88,8 @@ impl Serialize for swim::Member {
             &self.get_gossip_port(),
         )?;
         strukt.serialize_field("persistent", &self.get_persistent())?;
+        // TODO: serialize departed?
+        strukt.serialize_field("zone_id", &self.get_zone_id())?;
         strukt.end()
     }
 }
