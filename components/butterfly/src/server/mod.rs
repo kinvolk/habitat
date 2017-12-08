@@ -94,6 +94,12 @@ pub struct Server {
     blacklist: Arc<RwLock<HashSet<String>>>,
 }
 
+#[derive(PartialEq)]
+enum ZoneIDSetupKind {
+    Settle,
+    Override,
+}
+
 impl Clone for Server {
     fn clone(&self) -> Server {
         Server {
@@ -476,26 +482,43 @@ impl Server {
 
     pub fn override_zone_uuid(&self, zone_uuid: Uuid)
     {
-        let mut me = self.member.write().expect("Member lock is poisoned");
-        me.set_zone_uuid(Uuid::nil());
-        Self::setup_zone_uuid(&mut me, Some(zone_uuid));
+        self.setup_zone_uuid(Some(zone_uuid), ZoneIDSetupKind::Override);
     }
 
     pub fn settle_zone_uuid(&self, zone_uuid: Option<Uuid>) {
-        let mut me = self.member.write().expect("Member lock is poisoned");
-        Self::setup_zone_uuid(&mut me, zone_uuid);
+        self.setup_zone_uuid(zone_uuid, ZoneIDSetupKind::Settle);
     }
 
-    fn setup_zone_uuid(member: &mut Member, zone_uuid: Option<Uuid>) {
-        if member.get_zone_uuid().is_nil() {
+    fn setup_zone_uuid(&self, zone_uuid: Option<Uuid>, setup_kind: ZoneIDSetupKind) {
+        let mut me = self.member.write().expect("Member lock is poisoned");
+        if setup_kind == ZoneIDSetupKind::Override || me.get_zone_uuid().is_nil() {
             let new_zone_uuid = match zone_uuid {
                 Some(uuid) => uuid,
                 None => Uuid::new_v4(),
             };
-            member.set_zone_uuid (new_zone_uuid);
-            let mut incarnation = member.get_incarnation();
+            me.set_zone_uuid (new_zone_uuid);
+            let mut incarnation = me.get_incarnation();
             incarnation += 1;
-            member.set_incarnation(incarnation);
+            me.set_incarnation(incarnation);
+
+            let member = me.clone();
+            let rk = RumorKey::from(&member);
+            self.member_list.insert(member, Health::Alive);
+
+            let trace_member_id = String::from(me.get_id());
+            let trace_incarnation = incarnation;
+            let trace_zone_id = String::from(me.get_zone_id());
+            let trace_health = Health::Alive;
+            trace_it!(
+                MEMBERSHIP: self,
+                TraceKind::MemberUpdate,
+                trace_member_id,
+                trace_incarnation,
+                trace_zone_id,
+                trace_health
+            );
+
+            self.rumor_heat.start_hot_rumor(rk);
         }
     }
 
