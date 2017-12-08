@@ -474,25 +474,25 @@ impl Server {
         }
     }
 
-    pub fn override_zone_id(&self, zone_id: Uuid)
+    pub fn override_zone_uuid(&self, zone_uuid: Uuid)
     {
         let mut me = self.member.write().expect("Member lock is poisoned");
-        me.set_zone_id(Uuid::nil());
-        Self::setup_zone_id(&mut me, Some(zone_id));
+        me.set_zone_uuid(Uuid::nil());
+        Self::setup_zone_uuid(&mut me, Some(zone_uuid));
     }
 
-    pub fn settle_zone_id(&self, zone_id: Option<Uuid>) {
+    pub fn settle_zone_uuid(&self, zone_uuid: Option<Uuid>) {
         let mut me = self.member.write().expect("Member lock is poisoned");
-        Self::setup_zone_id(&mut me, zone_id);
+        Self::setup_zone_uuid(&mut me, zone_uuid);
     }
 
-    fn setup_zone_id(member: &mut Member, zone_id: Option<Uuid>) {
-        if member.zone_id().is_nil() {
-            let new_zone_id = match zone_id {
-                Some(id) => id,
+    fn setup_zone_uuid(member: &mut Member, zone_uuid: Option<Uuid>) {
+        if member.get_zone_uuid().is_nil() {
+            let new_zone_uuid = match zone_uuid {
+                Some(uuid) => uuid,
                 None => Uuid::new_v4(),
             };
-            member.set_zone_id (new_zone_id);
+            member.set_zone_uuid (new_zone_uuid);
             let mut incarnation = member.get_incarnation();
             incarnation += 1;
             member.set_incarnation(incarnation);

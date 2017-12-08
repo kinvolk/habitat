@@ -212,20 +212,20 @@ impl Inbound {
         }
         {
             let ack_member: Member = msg.get_ack().get_from().into();
-            let ack_zone_id = ack_member.zone_id();
-            let maybe_new_zone_id = {
+            let ack_zone_uuid = ack_member.get_zone_uuid();
+            let maybe_new_zone_uuid = {
                 let member = self.server
                     .member
                     .read()
                     .expect("Member is poisoned");
-                if ack_zone_id > member.zone_id() {
-                    Some(ack_zone_id.clone())
+                if ack_zone_uuid > member.get_zone_uuid() {
+                    Some(ack_zone_uuid)
                 } else {
                     None
                 }
             };
-            if let Some(new_zone_id) = maybe_new_zone_id {
-                self.server.override_zone_id(new_zone_id);
+            if let Some(new_zone_uuid) = maybe_new_zone_uuid {
+                self.server.override_zone_uuid(new_zone_uuid);
             }
         }
 
@@ -253,22 +253,23 @@ impl Inbound {
                   addr,
                   &msg);
         let target: Member = msg.get_ping().get_from().into();
-        if target.zone_id().is_nil() {
-            self.server.settle_zone_id(None);
+        let target_zone_uuid = target.get_zone_uuid();
+        if target_zone_uuid.is_nil() {
+            self.server.settle_zone_uuid(None);
         } else {
-            let maybe_new_zone_id = {
+            let maybe_new_zone_uuid = {
                 let member = self.server
                     .member
                     .read()
                     .expect("Member is poisoned");
-                if target.zone_id() > member.zone_id() {
-                    Some(target.zone_id().clone())
+                if target_zone_uuid > member.get_zone_uuid() {
+                    Some(target_zone_uuid)
                 } else {
                     None
                 }
             };
-            if let Some(new_zone_id) = maybe_new_zone_id {
-                self.server.override_zone_id(new_zone_id);
+            if let Some(new_zone_uuid) = maybe_new_zone_uuid {
+                self.server.override_zone_uuid(new_zone_uuid);
             }
         }
         if msg.get_ping().has_forward_to() {

@@ -161,11 +161,11 @@ impl Member {
         }
     }
 
-    pub fn zone_id(&self) -> Uuid {
+    pub fn get_zone_uuid(&self) -> Uuid {
         Self::parse_uuid(self.proto.get_zone_id())
     }
 
-    pub fn set_zone_id(&mut self, zone_id: Uuid) {
+    pub fn set_zone_uuid(&mut self, zone_id: Uuid) {
         self.proto.set_zone_id(zone_id.simple().to_string());
     }
 }
