@@ -32,8 +32,10 @@ lazy_static! {
     );
 }
 
+const KUBECONFIG_ENVVAR: &'static str = "KUBECONFIG";
+
 pub struct KubernetesExporterSpec {
-    pub kubeconfig: String,
+    pub kubeconfig_path: String,
     pub replicas: i32,
 }
 
@@ -103,8 +105,6 @@ impl<'a> KubernetesExporter<'a> {
     fn apply_to_cluster(&self, exporter: Child, log_pipe: &mut LogPipe) -> Result<ExitStatus> {
 
         let mut cmd = Command::new("/usr/local/bin/kubectl");
-        cmd.arg("--kubeconfig");
-        cmd.arg(&self.spec.kubeconfig);
         cmd.arg("apply");
         cmd.arg("-f");
         cmd.arg("-");
@@ -116,6 +116,12 @@ impl<'a> KubernetesExporter<'a> {
         }
         cmd.env(NONINTERACTIVE_ENVVAR, "true"); // Disables progress bars
         cmd.env("TERM", "xterm-256color"); // Emits ANSI color codes
+        debug!(
+            "setting kubectl command env, {}={}",
+            KUBECONFIG_ENVVAR,
+            &self.spec.kubeconfig_path
+        );
+        cmd.env(KUBECONFIG_ENVVAR, &self.spec.kubeconfig_path); // Use the job-specific `dockerd`
 
         cmd.stdin(exporter.stdout.unwrap());
         cmd.stdout(Stdio::piped());
