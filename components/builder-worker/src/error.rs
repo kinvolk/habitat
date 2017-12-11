@@ -49,6 +49,7 @@ pub enum Error {
     GithubAppAuthErr(github_api_client::HubError),
     HabitatCore(hab_core::Error),
     InvalidIntegrations(String),
+    Kubectl(io::Error),
     NoAuthTokenError,
     NoNetworkGatewayError,
     NoNetworkInterfaceError,
@@ -110,6 +111,7 @@ impl fmt::Display for Error {
             Error::GithubAppAuthErr(ref e) => format!("{}", e),
             Error::HabitatCore(ref e) => format!("{}", e),
             Error::InvalidIntegrations(ref s) => format!("Invalid integration: {}", s),
+            Error::Kubectl(ref e) => format!("Failure running kubectl, {}", e),
             Error::NoAuthTokenError => format!("No auth_token config specified"),
             Error::NoNetworkGatewayError => format!("No network_gateway config specified"),
             Error::NoNetworkInterfaceError => format!("No network_interface config specified"),
@@ -173,6 +175,7 @@ impl error::Error for Error {
             Error::GithubAppAuthErr(ref err) => err.description(),
             Error::HabitatCore(ref err) => err.description(),
             Error::InvalidIntegrations(_) => "Invalid integrations detected",
+            Error::Kubectl(ref err) => err.description(),
             Error::NoAuthTokenError => "No auth_token config specified",
             Error::NoNetworkGatewayError => "No network_gateway config specified",
             Error::NoNetworkInterfaceError => "No network_interface config specified",
@@ -221,5 +224,11 @@ impl From<protocol::ProtocolError> for Error {
 impl From<zmq::Error> for Error {
     fn from(err: zmq::Error) -> Error {
         Error::Zmq(err)
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Error {
+        Error::Kubectl(err)
     }
 }
