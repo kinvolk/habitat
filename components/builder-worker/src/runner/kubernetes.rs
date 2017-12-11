@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fs::File;
 use std::io;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -125,7 +126,9 @@ impl<'a> KubernetesExporter<'a> {
 
         cmd.stdin(exporter.stdout.unwrap());
         cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+        cmd.stderr(Stdio::from(File::create(
+            self.workspace.root().join("kubectl.stderr.log"),
+        )?));
 
         debug!("spawning kubectl command");
         let mut child = cmd.spawn().map_err(Error::Exporter)?;
