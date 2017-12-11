@@ -19,6 +19,7 @@ use serde_json::{self, Value as JsonValue};
 
 use error::{Error, Result};
 use runner::docker::DockerExporterSpec;
+use runner::kubernetes::KubernetesExporterSpec;
 use runner::workspace::Workspace;
 
 // TODO fn: The horror... well, it's not that bad. There isn't a quick win for recursive chown'ing
@@ -234,6 +235,15 @@ pub fn docker_exporter_spec(workspace: &Workspace) -> DockerExporterSpec {
             .as_bool()
             .expect("version_release_tag value is a bool"),
         custom_tag: custom_tag,
+    }
+}
+
+/// Builds the Docker exporter details from the origin and project integrations.
+pub fn kubernetes_exporter_spec(workspace: &Workspace) -> KubernetesExporterSpec {
+    // TODO: hardcoded until rebase
+    KubernetesExporterSpec {
+        kubeconfig_path: "/opt/kubeconfig",
+        replicas: 1,
     }
 }
 
