@@ -410,6 +410,7 @@ impl Runner {
                     b"\n--- BEGIN: Kubernetes export ---\n",
                 )?;
                 status = KubernetesExporter::new(
+                    util::kubernetes_exporter_spec(&self.workspace),
                     &self.workspace,
                     &self.config.bldr_url,
                 ).export(&mut log_pipe)?;
@@ -520,11 +521,12 @@ impl Runner {
     /// and we are assuming that any calls to this method will happen after the integration data
     /// has been validated.
     fn has_docker_integration(&self) -> bool {
+        // TODO: needs to be changed to fit kubernetes exporter
         !self.workspace.job.get_project_integrations().is_empty()
     }
 
     fn has_kubernetes_integration(&self) -> bool {
-        // demo
+        // TODO: how should this be done as ^ won't work anymore
         true
     }
 }

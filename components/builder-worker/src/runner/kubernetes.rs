@@ -45,12 +45,9 @@ pub struct KubernetesExporter<'a> {
 
 impl<'a> KubernetesExporter<'a> {
     /// Creates a new Kubernetes exporter for a given `Workspace` and Builder URL.
-    pub fn new(workspace: &'a Workspace, bldr_url: &'a str) -> Self {
+    pub fn new(spec: KubernetesExporterSpec, workspace: &'a Workspace, bldr_url: &'a str) -> Self {
         KubernetesExporter {
-            spec: KubernetesExporterSpec {
-                kubeconfig: String::from("/opt/kubeconfig"),
-                replicas: 1,
-            },
+            spec: spec,
             workspace: workspace,
             bldr_url: bldr_url,
         }
