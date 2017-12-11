@@ -36,7 +36,7 @@ const KUBECONFIG_ENVVAR: &'static str = "KUBECONFIG";
 
 pub struct KubernetesExporterSpec {
     pub kubeconfig_path: String,
-    pub replicas: i32,
+    pub replicas: i64,
 }
 
 pub struct KubernetesExporter<'a> {
