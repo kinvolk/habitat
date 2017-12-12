@@ -9,6 +9,7 @@ fn main() {
     write_docker_exporter_pkg_ident();
     write_docker_pkg_ident();
     write_kubernetes_exporter_pkg_ident();
+    write_kubectl_pkg_ident();
 }
 
 fn write_studio_pkg_ident() {
@@ -49,4 +50,14 @@ fn write_kubernetes_exporter_pkg_ident() {
         _ => String::from("core/hab-pkg-export-kubernetes"),
     };
     util::write_out_dir_file("KUBERNETES_EXPORTER_PKG_IDENT", ident);
+}
+
+fn write_kubectl_pkg_ident() {
+    let ident = match env::var("PLAN_KUBECTL_PKG_IDENT") {
+        // Use the value provided by the build system if present
+        Ok(ident) => ident,
+        // Use the latest installed package as a default for development
+        _ => String::from("core/kubectl"),
+    };
+    util::write_out_dir_file("KUBECTL_PKG_IDENT", ident);
 }
