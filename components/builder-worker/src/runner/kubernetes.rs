@@ -31,6 +31,12 @@ lazy_static! {
         "hab-pkg-export-kubernetes",
         include_str!(concat!(env!("OUT_DIR"), "/KUBERNETES_EXPORTER_PKG_IDENT")),
     );
+
+    /// Absolute path to the kubectl program
+    static ref KUBECTL_PROGRAM: PathBuf = hfs::resolve_cmd_in_pkg(
+        "kubectl",
+        include_str!(concat!(env!("OUT_DIR"), "/KUBECTL_PKG_IDENT")),
+    );
 }
 
 const KUBECONFIG_ENVVAR: &'static str = "KUBECONFIG";
@@ -105,7 +111,7 @@ impl<'a> KubernetesExporter<'a> {
 
     fn apply_to_cluster(&self, exporter: Child, log_pipe: &mut LogPipe) -> Result<ExitStatus> {
 
-        let mut cmd = Command::new("/usr/local/bin/kubectl");
+        let mut cmd = Command::new(&*KUBECTL_PROGRAM);
         cmd.arg("apply");
         cmd.arg("-f");
         cmd.arg("-");
