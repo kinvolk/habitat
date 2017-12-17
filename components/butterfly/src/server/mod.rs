@@ -71,6 +71,9 @@ pub struct Server {
     member_id: Arc<String>,
     pub member: Arc<RwLock<Member>>,
     pub member_list: MemberList,
+    zone_id: Arc<String>,
+    pub zone: Arc<RwLock<Zone>>,
+    pub zones: Zones,
     ring_key: Arc<Option<SymKey>>,
     rumor_heat: RumorHeat,
     pub service_store: RumorStore<Service>,
@@ -97,7 +100,7 @@ pub struct Server {
 #[derive(PartialEq)]
 enum ZoneIDSetupKind {
     Settle,
-    Override,
+    Override(Uuid),
 }
 
 impl Clone for Server {
@@ -107,6 +110,9 @@ impl Clone for Server {
             member_id: self.member_id.clone(),
             member: self.member.clone(),
             member_list: self.member_list.clone(),
+            zone_id: self.zone_id.clone(),
+            zone: self.zone.clone(),
+            zones: self.zones.clone(),,
             ring_key: self.ring_key.clone(),
             rumor_heat: self.rumor_heat.clone(),
             service_store: self.service_store.clone(),
@@ -138,6 +144,7 @@ impl Server {
         swim_addr: T,
         gossip_addr: U,
         mut member: Member,
+        mut zone: Zone,
         trace: Trace,
         ring_key: Option<SymKey>,
         name: Option<String>,
@@ -156,11 +163,19 @@ impl Server {
             (Ok(Some(swim_socket_addr)), Ok(Some(gossip_socket_addr))) => {
                 member.set_swim_port(swim_socket_addr.port() as i32);
                 member.set_gossip_port(gossip_socket_addr.port() as i32);
+                let zones = if zone.get_uuid().nil() {
+                    Zones::new()
+                } else {
+                    Zones::new_with_zone(zone.clone())
+                }
                 Ok(Server {
                     name: Arc::new(name.unwrap_or(String::from(member.get_id()))),
                     member_id: Arc::new(String::from(member.get_id())),
                     member: Arc::new(RwLock::new(member)),
                     member_list: MemberList::new(),
+                    zone_id: Arc::new(String::from(zone.get_id())),
+                    zone: Arc::new(RwLock::new(zone)),
+                    zones: zones,
                     ring_key: Arc::new(ring_key),
                     rumor_heat: RumorHeat::default(),
                     service_store: RumorStore::default(),
@@ -480,46 +495,49 @@ impl Server {
         }
     }
 
-    pub fn override_zone_uuid(&self, zone_uuid: Uuid)
+    pub fn override_zone(&self, zone_uuid: Uuid)
     {
-        self.setup_zone_uuid(Some(zone_uuid), ZoneIDSetupKind::Override);
+        self.setup_zone_uuid(ZoneIDSetupKind::Override(uuid));
     }
 
-    pub fn settle_zone_uuid(&self, zone_uuid: Option<Uuid>) {
-        self.setup_zone_uuid(zone_uuid, ZoneIDSetupKind::Settle);
+    pub fn settle_zone(&self) {
+        self.setup_zone_uuid(ZoneIDSetupKind::Settle);
     }
 
-    fn setup_zone_uuid(&self, zone_uuid: Option<Uuid>, setup_kind: ZoneIDSetupKind) {
+    fn setup_zone_uuid(&self, setup_kind: ZoneIDSetupKind) {
         let mut me = self.member.write().expect("Member lock is poisoned");
-        if setup_kind == ZoneIDSetupKind::Override || me.get_zone_uuid().is_nil() {
-            let new_zone_uuid = match zone_uuid {
-                Some(uuid) => uuid,
-                None => Uuid::new_v4(),
-            };
-            me.set_zone_uuid (new_zone_uuid);
-            let mut incarnation = me.get_incarnation();
-            incarnation += 1;
-            me.set_incarnation(incarnation);
+        let new_zone_uuid = match setup_kind {
+            ZoneIDSetupKind::Settle => {
+                if !me.get_zone_uuid().is_nil() {
+                    return;
+                }
+                Uuid::new_v4()
+            }
+            ZoneIDSetupKind::Override(zone_uuid) => zone_uuid,
+        };
+        me.set_zone_uuid (new_zone_uuid);
+        let mut incarnation = me.get_incarnation();
+        incarnation += 1;
+        me.set_incarnation(incarnation);
 
-            let member = me.clone();
-            let rk = RumorKey::from(&member);
-            self.member_list.insert(member, Health::Alive);
+        let member = me.clone();
+        let rk = RumorKey::from(&member);
+        self.member_list.insert(member, Health::Alive);
 
-            let trace_member_id = String::from(me.get_id());
-            let trace_incarnation = incarnation;
-            let trace_zone_id = String::from(me.get_zone_id());
-            let trace_health = Health::Alive;
-            trace_it!(
-                MEMBERSHIP: self,
-                TraceKind::MemberUpdate,
-                trace_member_id,
-                trace_incarnation,
-                trace_zone_id,
-                trace_health
-            );
+        let trace_member_id = String::from(me.get_id());
+        let trace_incarnation = incarnation;
+        let trace_zone_id = String::from(me.get_zone_id());
+        let trace_health = Health::Alive;
+        trace_it!(
+            MEMBERSHIP: self,
+            TraceKind::MemberUpdate,
+            trace_member_id,
+            trace_incarnation,
+            trace_zone_id,
+            trace_health
+        );
 
-            self.rumor_heat.start_hot_rumor(rk);
-        }
+        self.rumor_heat.start_hot_rumor(rk);
     }
 
     /// Set our member to departed, then send up to 10 out of order ack messages to other
@@ -596,10 +614,46 @@ impl Server {
         }
     }
 
+    /// Given a zone , insert it into the Zones.
+    fn insert_zone_from_rumor(&self, zone: Zone) {
+        let rk: RumorKey = RumorKey::from(&zone);
+        /*
+        // NOTE: This sucks so much right here. Check out how we
+        // allocate no matter what, because of just how the logic
+        // goes. The value of the trace is really high, though, so we
+        // suck it for now.
+        let trace_member_id = String::from(member.get_id());
+        let trace_incarnation = member.get_incarnation();
+        let trace_zone_id = String::from(member.get_zone_id());
+        let trace_health = health.clone();
+         */
+
+        if self.zones.insert(zone) {
+            /*
+            trace_it!(
+                MEMBERSHIP: self,
+                TraceKind::MemberUpdate,
+                trace_member_id,
+                trace_incarnation,
+                trace_zone_id,
+                trace_health
+            );
+             */
+            self.rumor_heat.start_hot_rumor(rk);
+        }
+    }
+
     /// Insert members from a list of received rumors.
     fn insert_member_from_rumors(&self, members: Vec<(Member, Health)>) {
         for (member, health) in members.into_iter() {
             self.insert_member_from_rumor(member, health);
+        }
+    }
+
+    /// Insert zones from a list of received rumors.
+    fn insert_zone_from_rumors(&self, zones: Vec<Zone>) {
+        for zone in zones
+            self.insert_zone_from_rumor(zone);
         }
     }
 

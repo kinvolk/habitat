@@ -25,7 +25,7 @@ use std::time::Duration;
 use protobuf;
 
 use member::{Member, Health};
-use message::swim::{Swim, Swim_Type};
+use message::swim::{Ping, Swim, Swim_Type};
 use server::{Server, outbound};
 use trace::TraceKind;
 
@@ -164,9 +164,11 @@ impl Inbound {
             outbound::ping(
                 &self.server,
                 &self.socket,
-                target,
-                target.swim_socket_address(),
-                Some(from.into()),
+                outbound::PingOptions {
+                    target: target,
+                    addr: target.swim_socket_address(),
+                    forward_to: Some(from.into()),
+                },
             );
         });
     }
@@ -213,7 +215,12 @@ impl Inbound {
         {
             let ack_member: Member = msg.get_ack().get_from().into();
             let ack_zone_uuid = ack_member.get_zone_uuid();
-            let maybe_new_zone_uuid = {
+            // member_contains_extra_zone checks if addresses_for_zones contain server's zone
+            let maybe_new_zone_uuid = if Self::member_contains_extra_zone (&ack_member, self.server.zone)
+                // means that we were talking over the NAT boundary,
+                // so we are going to settle our own zone
+                None
+            } else {
                 let member = self.server
                     .member
                     .read()
@@ -226,6 +233,10 @@ impl Inbound {
             };
             if let Some(new_zone_uuid) = maybe_new_zone_uuid {
                 self.server.override_zone_uuid(new_zone_uuid);
+            } else {
+                self.server.settle_zone_uuid();
+                // TODO: if settled, send an ack to ack_member with a
+                // fixed zone information
             }
         }
 
@@ -238,11 +249,13 @@ impl Inbound {
                 .collect();
             membership
         };
+        let zones: Vec<Zone> = msg.take_zones().into();
         match self.tx_outbound.send((addr, msg)) {
             Ok(()) => {}
             Err(e) => panic!("Outbound thread has died - this shouldn't happen: #{:?}", e),
         }
         self.server.insert_member_from_rumors(membership);
+        self.server.insert_zone_from_rumors(zones);
     }
 
     /// Process ping messages.
@@ -254,14 +267,22 @@ impl Inbound {
                   &msg);
         let target: Member = msg.get_ping().get_from().into();
         let target_zone_uuid = target.get_zone_uuid();
-        if target_zone_uuid.is_nil() {
-            self.server.settle_zone_uuid(None);
+        let to_swim_address = get_ping_target_swim_address(msg.get_ping());
+        let internal_swim_address = self.server.member.read().expect("Member lock is poisoned").swim_socket_address();
+        if to_swim_address != internal_swim_address {
+            self.server.settle_zone_uuid();
+            self.server.fill_address_for_zone(to_swim_address, msg.get_ping().get_from_zone());
+        } else if target_zone_uuid.is_nil() {
+            self.server.settle_zone_uuid();
         } else {
+            // TODO: not sure about it, we probably should contact the
+            // maintainer of the zone to tell it about merging the
+            // zones.
             let maybe_new_zone_uuid = {
                 let member = self.server
                     .member
                     .read()
-                    .expect("Member is poisoned");
+                    .expect("Member lock is poisoned");
                 if target_zone_uuid > member.get_zone_uuid() {
                     Some(target_zone_uuid)
                 } else {
@@ -276,12 +297,26 @@ impl Inbound {
             outbound::ack(
                 &self.server,
                 &self.socket,
-                &target,
-                addr,
-                Some(msg.mut_ping().take_forward_to().into()),
+                outbound::AckOptions {
+                    target: &target,
+                    addr: addr,
+                    forward_to: Some(msg.mut_ping().take_forward_to().into()),
+                    from_address_and_swim_port: None,
+                    from_zone: self.server.zone.read().expect("Zone lock is poisoned").clone(),
+                },
             );
         } else {
-            outbound::ack(&self.server, &self.socket, &target, addr, None);
+            outbound::ack(
+                &self.server,
+                &self.socket,
+                outbound::AckOptions {
+                    target: &target,
+                    addr: addr,
+                    forward_to: None,
+                    from_address_and_swim_port: to_swim_address,
+                    from_zone: self.server.zone.read().expect("Zone lock is poisoned").clone(),
+                },
+            );
         }
         // Populate the member for this sender with its remote address
         let from = {
@@ -303,5 +338,18 @@ impl Inbound {
             })
             .collect();
         self.server.insert_member_from_rumors(membership);
+        let zones: Vec<Zone> = msg.take_zones().into();
+        self.server.insert_zone_from_rumors(zones);
+    }
+
+    fn get_ping_target_swim_address(ping: &Ping) -> SocketAddr {
+        let address_str = format!("{}:{}", ping.get_to_address(), ping.get_to_swim_port());
+        match address_str.parse() {
+            Ok(addr) => addr,
+            // FIXME: Don't panic. Return optional or result or something.
+            Err(e) => {
+                panic!("Cannot parse member {:?} address: {}", self, e);
+            }
+        }
     }
 }

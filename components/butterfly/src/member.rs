@@ -147,22 +147,8 @@ impl Member {
         }
     }
 
-    fn parse_uuid(input: &str) -> Uuid {
-        match Uuid::parse_str(input) {
-            Ok(u) => u,
-            Err(e) => {
-                error!(
-                    "Member from ProtoMember: cannot parse zone ID: {}, {}",
-                    input,
-                    e
-                );
-                Uuid::nil()
-            }
-        }
-    }
-
     pub fn get_zone_uuid(&self) -> Uuid {
-        Self::parse_uuid(self.proto.get_zone_id())
+        message::swim::parse_uuid(self.proto.get_zone_id(), "zone ID")
     }
 
     pub fn set_zone_uuid(&mut self, zone_id: Uuid) {

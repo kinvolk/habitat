@@ -26,6 +26,21 @@ use error::Result;
 use message::swim::Wire;
 use protobuf::{self, Message};
 
+fn parse_uuid(input: &str, what: &str) -> Uuid {
+    match Uuid::parse_str(input) {
+        Ok(u) => u,
+        Err(e) => {
+            error!(
+                "Zone: cannot parse {}: {}, {}",
+                what,
+                input,
+                e
+            );
+            Uuid::nil()
+        }
+    }
+}
+
 pub fn generate_wire(payload: Vec<u8>, ring_key: Option<&SymKey>) -> Result<Vec<u8>> {
     let mut wire = Wire::new();
     if let Some(ring_key) = ring_key {

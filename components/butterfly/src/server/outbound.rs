@@ -26,7 +26,7 @@ use std::fmt;
 use time::SteadyTime;
 use protobuf::{Message, RepeatedField};
 
-use message::swim::{Ack, Ping, PingReq, Swim, Swim_Type, Rumor_Type};
+use message::swim::{Ack, Ping, PingReq, Swim, Swim_Type, Rumor_Type, Zone};
 use rumor::RumorKey;
 use server::Server;
 use server::timing::Timing;
@@ -97,9 +97,11 @@ impl Outbound {
                             ping(
                                 &self.server,
                                 &self.socket,
-                                &member,
-                                member.swim_socket_address(),
-                                None,
+                                PingOptions {
+                                    target: &member,
+                                    addr: member.swim_socket_address(),
+                                    forward_to: None,
+                                },
                             );
                         });
                     }
@@ -174,7 +176,11 @@ impl Outbound {
         trace_it!(PROBE: &self.server, TraceKind::ProbeBegin, member.get_id(), addr);
 
         // Ping the member, and wait for the ack.
-        ping(&self.server, &self.socket, &member, addr, None);
+        ping(&self.server, &self.socket, PingOptions {
+            target: &member,
+            addr: addr,
+            forward_to: None,
+        });
         if self.recv_ack(&member, addr, AckFrom::Ping) {
             trace_it!(PROBE: &self.server, TraceKind::ProbeAckReceived, member.get_id(), addr);
             trace_it!(PROBE: &self.server, TraceKind::ProbeComplete, member.get_id(), addr);
@@ -261,8 +267,9 @@ impl Outbound {
 }
 
 /// Populate a SWIM message with rumors.
-pub fn populate_membership_rumors(server: &Server, target: &Member, swim: &mut Swim) {
+fn populate_swim_with_rumors(server: &Server, target: &Member, swim: &mut Swim) {
     let mut membership_entries = RepeatedField::new();
+    let mut zone_entries = RepeatedField::new();
     // If this isn't the first time we are communicating with this target, we want to include this
     // targets current status. This ensures that members always get a "Confirmed" rumor, before we
     // have the chance to flip it to "Alive", which helps make sure we heal from a partition.
@@ -274,29 +281,48 @@ pub fn populate_membership_rumors(server: &Server, target: &Member, swim: &mut S
 
     // NOTE: the way this is currently implemented, this is grabbing
     // the 5 coolest (but still warm!) Member rumors.
-    let rumors: Vec<RumorKey> = server.rumor_heat
-        .currently_hot_rumors(target.get_id())
-        .into_iter()
+    let hot_rumors = server.rumor_heat
+        .currently_hot_rumors(target.get_id());
+    let membership_rumors: Vec<RumorKey> = hot_rumors.iter()
         .filter(|ref r| r.kind == Rumor_Type::Member)
+        .take(5) // TODO (CM): magic number!
+        .map_clone() // or something - it should be cloning iterator
+        .collect();
+    let zone_rumors: Vec<RumorKey> = hot_rumors.into_iter()
+        .filter(|ref r| r.kind == Rumor_Type::Zone)
         .take(5) // TODO (CM): magic number!
         .collect();
 
-    for ref rkey in rumors.iter() {
+    for ref rkey in membership_rumors {
         if let Some(member) = server.member_list.membership_for(&rkey.key()) {
             membership_entries.push(member);
         }
     }
+    for ref rkey in zone_rumors {
+        if let Some(zone) = server.zones.zone_for(&rkey.key()) {
+            zone_entries.push(zone);
+        }
+    }
+
     // We don't want to update the heat for rumors that we know we are sending to a target that is
     // confirmed dead; the odds are, they won't receive them. Lets spam them a little harder with
     // rumors.
     if !server.member_list.persistent_and_confirmed(target) {
+        let rumors = membership_rumors + zone_rumors;
         server.rumor_heat.cool_rumors(target.get_id(), &rumors);
     }
     swim.set_membership(membership_entries);
+    swim.set_zones(zone_entries);
+
 }
 
 /// Send a PingReq.
-pub fn pingreq(server: &Server, socket: &UdpSocket, pingreq_target: &Member, target: &Member) {
+pub fn pingreq(
+    server: &Server,
+    socket: &UdpSocket,
+    pingreq_target: &Member,
+    target: &Member
+) {
     let addr = pingreq_target.swim_socket_address();
     let mut swim = Swim::new();
     swim.set_field_type(Swim_Type::PINGREQ);
@@ -307,7 +333,7 @@ pub fn pingreq(server: &Server, socket: &UdpSocket, pingreq_target: &Member, tar
     }
     pingreq.set_target(target.proto.clone());
     swim.set_pingreq(pingreq);
-    populate_membership_rumors(server, target, &mut swim);
+    populate_swim_with_rumors(server, target, &mut swim);
     let bytes = match swim.write_to_bytes() {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -352,13 +378,17 @@ pub fn pingreq(server: &Server, socket: &UdpSocket, pingreq_target: &Member, tar
     );
 }
 
+pub struct PingOptions {
+    target: &Member,
+    addr: SocketAddr,
+    forward_to: Option<Member>,
+}
+
 /// Send a Ping.
 pub fn ping(
     server: &Server,
     socket: &UdpSocket,
-    target: &Member,
-    addr: SocketAddr,
-    mut forward_to: Option<Member>,
+    options: PingOptions,
 ) {
     let mut swim = Swim::new();
     swim.set_field_type(Swim_Type::PING);
@@ -367,12 +397,16 @@ pub fn ping(
         let member = server.member.read().unwrap();
         ping.set_from(member.proto.clone());
     }
-    if forward_to.is_some() {
-        let member = forward_to.take().unwrap();
+    if options.forward_to.is_some() {
+        let member = options.forward_to.take().unwrap();
         ping.set_forward_to(member.proto);
     }
+    ping.set_to_address(format!("{}", options.addr.ip()));
+    // unsigned 16 bit integer can be perfectly contained inside
+    // signed 32 bit integer
+    ping.set_to_swim_port(options.addr.port() as i32);
     swim.set_ping(ping);
-    populate_membership_rumors(server, target, &mut swim);
+    populate_swim_with_rumors(server, options.target, &mut swim);
 
     let bytes = match swim.write_to_bytes() {
         Ok(bytes) => bytes,
@@ -389,26 +423,26 @@ pub fn ping(
         }
     };
 
-    match socket.send_to(&payload, addr) {
+    match socket.send_to(&payload, options.addr) {
         Ok(_s) => {
-            if forward_to.is_some() {
+            if options.forward_to.is_some() {
                 trace!(
                     "Sent Ping to {} on behalf of {}@{}",
-                    addr,
+                    options.addr,
                     swim.get_ping().get_forward_to().get_id(),
                     swim.get_ping().get_forward_to().get_address()
                 );
             } else {
-                trace!("Sent Ping to {}", addr);
+                trace!("Sent Ping to {}", options.addr);
             }
         }
-        Err(e) => error!("Failed Ping to {}: {}", addr, e),
+        Err(e) => error!("Failed Ping to {}: {}", options.addr, e),
     }
     trace_it!(
         SWIM: server,
         TraceKind::SendPing,
-        target.get_id(),
-        addr,
+        options.target.get_id(),
+        options.addr,
         &swim
     );
 }
@@ -457,27 +491,41 @@ pub fn forward_ack(server: &Server, socket: &UdpSocket, addr: SocketAddr, swim: 
     }
 }
 
+pub struct AckOptions {
+    target: &Member,
+    addr: SocketAddr,
+    forward_to: Option<Member>,
+    from_swim_address: Option<SocketAddr>,
+    from_zone: Zone,
+}
+
 /// Send an Ack.
 pub fn ack(
     server: &Server,
     socket: &UdpSocket,
-    target: &Member,
-    addr: SocketAddr,
-    mut forward_to: Option<Member>,
+    options: AckOptions,
 ) {
     let mut swim = Swim::new();
     swim.set_field_type(Swim_Type::ACK);
     let mut ack = Ack::new();
-    {
+    let (from, from_address, from_swim_port) = {
         let member = server.member.read().unwrap();
-        ack.set_from(member.proto.clone());
-    }
-    if forward_to.is_some() {
-        let member = forward_to.take().unwrap();
+        let proto = member.proto.clone();
+        match options.from_address_and_swim_port {
+            Some(address) => (proto, format!("{}", address.ip()), address.port() as i32),
+            None => (proto, member.get_address(), member.get_swim_port()),
+        }
+    };
+    ack.set_from(from);
+    if options.forward_to.is_some() {
+        let member = options.forward_to.take().unwrap();
         ack.set_forward_to(member.proto);
     }
+    ack.set_from_zone(zone);
+    ack.set_from_address(from_address);
+    ack.set_from_port(from_port);
     swim.set_ack(ack);
-    populate_membership_rumors(server, target, &mut swim);
+    populate_swim_with_rumors(server, options.target, &mut swim);
 
     let bytes = match swim.write_to_bytes() {
         Ok(bytes) => bytes,
@@ -494,19 +542,19 @@ pub fn ack(
         }
     };
 
-    match socket.send_to(&payload, addr) {
+    match socket.send_to(&payload, options.addr) {
         Ok(_s) => {
             trace!(
                 "Sent ack to {}@{}",
                 swim.get_ack().get_from().get_id(),
-                addr
+                options.addr
             )
         }
         Err(e) => {
             error!(
                 "Failed ack to {}@{}: {}",
                 swim.get_ack().get_from().get_id(),
-                addr,
+                options.addr,
                 e
             )
         }
@@ -514,8 +562,8 @@ pub fn ack(
     trace_it!(
         SWIM: server,
         TraceKind::SendAck,
-        target.get_id(),
-        addr,
+        options.target.get_id(),
+        options.addr,
         &swim
     );
 }
