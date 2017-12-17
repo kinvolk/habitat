@@ -1,0 +1,238 @@
+Sorry for the wall of text.
+
+Currently ring is defined basically as a list of members. A member is
+described with an ID, an incarnation, an address and ports (1) and
+other data. If a supervisor receives a message with that list, it
+knows how to talk to other supervisors in the ring. A member contains
+information about a supervisor, so they are used interchangeably in
+the following text.
+
+Currently I'd like to add another thing that will be a part of a ring
+definition - zones. Zone is a part of a ring. It does not overlap with
+other zones. In other words - zone can contain many supervisors, but
+one supervisor belongs to only one zone. Zone is meant to describe the
+network of supervisors that can easily talk to each other, that is -
+all the supervisor in a zone needs to talk to other supervisor in the
+same zone is just its IP address and port. The communication between
+supervisors in different zones might be a bit more involved, which is
+true when we want to talk with a service behind a NAT. An example of
+it could be a supervisor outside a k8s cluster that wants to talk to
+the supervisor inside the cluster.
+
+So the definition of the rings would be a list of members and a tree
+of zones (2). The parent-child relationship in the tree describes how
+supervisor in one zone can communicate with supervisor on other
+node. Taking the k8s cluster example from above, the supervisors
+inside the cluster would be in a child zone of a zone that contains
+supervisors outside the cluster. So supervisors in child zone can
+easily talk to the supervisors in parent zone, but the opposite it's
+not true.
+
+A subset of supervisors in zone can act as gateways - these are the
+supervisors that are exposed over the NAT boundary and these are the
+supervisors to whom supervisors in parent zone can talk to in order to
+get a message routed to some other supervisor that is not exposed.
+
+So a zone could be described with an ID (UUID, just like a member), an
+incarnation, an ID of a parent zone (possibly nil; could be a list of
+IDs, if the structure would be a directed acyclic graph instead of a
+tree), a list of IDs of child zones and a list of IDs of members which
+serve as gateways. (3)
+
+When a supervisor starts, it has a nil zone ID. When it does not have
+any peers to talk to, it will settle the zone ID before replying to
+the first supervisor that talks to it, so the reply can possibly
+contain a settled zone ID. By settling the zone ID I mean here
+generating a new ID if it is nil.
+
+In case of supervisor that just started and has a list of peers to
+talk to to join the ring, it assumes that its zone ID will be the one
+in the first reply it gets, unless the reply tells it not to do that -
+in this case it will settle its zone ID.
+
+The case when the supervisor receives a reply with a "do not take my
+zone ID as yours" happens when the supervisor pinged the other one
+behind a NAT. But how can the supervisor behind the NAT know that it
+is about to send a reply to the supervisor on the other side of NAT
+boundary? Adding a "To" field being an address and a port to the Ping
+message could solve this issue, because the supervisor could compare
+the internal address and port it already knows and the address from
+the "To" field. If they are different then it very likely means that
+the supervisor sending the Ping message should belong to a different
+zone.
+
+There may be a situation where a supervisor joins two separate rings,
+so they should become one ring with one zone - at this moment, zone
+merging should start. I suppose this could be done with a new kind of
+rumor…
+
+Also, the "To" field from the Ping message can serve as a way for the
+supervisor to learn that it is really exposed outside the NAT, so the
+supervisor becomes a gateway.
+
+I think that the member description should be extended with
+information about zone it belongs to and with a list of extra
+addresses the member is available from.
+
+The new member information and the new zones information could be used
+to define the route between two supervisors in two different zones. I
+can see four basic scenarios where supervisor in zone A sends a
+message to supervisor in zone B:
+
+1. Zone A is a parent of zone B - message could be sent to random
+gateway of zone B. The gateway will take care of forwarding it
+further.
+
+2. Zone A is a child of zone B - message could be sent directly, I
+think, skipping the gateways.
+
+3. Zone A is a sibling of zone B - message could be sent to random
+gateway of zone B, so we don't need to involve any supervisor in
+parent zone in message forwarding. This could be seen as a kind of
+optimization, probably.
+
+4. Zone A is the same as zone B - message could be sent directly.
+
+Any complex route will be a list of those basic scenarios.
+
+Probably the fastest way to do the forwarding would be to add another
+kind of message (like ForwardedMessage) which could contain the
+payload (which is either a SWIM or a gossip message), an ID of a
+member that this message should go to and some TTL field. The
+ForwardedMessage message could be the payload of a Wire message.
+
+The recipient of the ForwardedMessage message could check if the
+member ID is the same as its own. If it's true, it could process
+it. Otherwise it could compute a route and forward the message to the
+first supervisor on the route. I suppose that if the supervisor
+doesn't have enough information about how to forward the message, it
+could decrement the TTL and send it to random supervisor in the same
+zone.
+
+I haven't thought too much over the backward-compatibility, though. I
+think that maybe it could be possible to detect that we are trying to
+talk over NAT boundary to the supervisor that runs some old,
+NAT-unaware version, and bail out or ignore or warn about it.
+
+1. Can we safely assume that swim port and gossip port will always
+have the same number? In butterfly it is possible for them to be
+different, but this is not utilized by the supervisor - it uses the
+same number for both. If they can be different in Real Life, it would
+complicate the design, because a supervisor could not quickly discover
+which port for gossip communication is being exposed after receiving a
+Ping message over the exposed swim port.
+
+2. A tree or a directed acyclic graph? Probably does not matter much
+anyway.
+
+3. The zone tree (or a graph) needs to be maintained somehow. Each
+supervisor is responsible for maintaining its member information and
+spreading information about the changes there. Who should be
+responsible for maintaining the zone information? Yet another leader
+chosen through election?
+
+Edited:
+
+- added missing information about incarnation
+- added more information about routing
+
+
+
+
+Draft: establishing ring with zones
+
+A <-- B - B tries to join the ring by talking to A
+A <-/- B - same, but over the NAT boundary
+A --- B - A and B form a ring
+A -/- B - same, but over the NAT boundary
+A(ZA) - A is in zone ZA
+A(*ZA) - A is a maintainer of zone ZA
+
+
+A <-- B
+
+- B sends ping to A
+- A settles its zone (ZA)
+- A sends an Ack message with from_address and from_swim_port set to
+  to_address and to_swim_port in Ping message
+- B sees that A's address is the same as in from_address and from_port
+  and overrides its zone with ZA.
+
+A(*ZA) --- B(ZA)
+
+
+
+A(*ZA) --- B(ZA) <-- C
+
+- C sends ping to B
+- B sends an Ack message with from_address and from_swim_port set to
+  to_address and to_swim_port in Ping message
+- C sees that B's address is the same as in from_address and from_port
+  and overrides its zone with ZA.
+
+A(*ZA) --- B(ZA) --- C(ZA)
+
+
+A(*ZA) --- B(ZA) <--\
+C(*ZC) --- D(ZC) <----- E
+
+- E sends ping to B
+- E sends ping to D
+- B sends an Ack message as usual
+- D sends an Ack message as usual
+- E gets a reply from B first (just an assumption)
+- E settles its zone to ZA
+- E gets a reply from D, with a different zone.
+- E notices that the from_address and from_port in the reply are the
+  same as the internal IP of D, so all this should be the same zone.
+- Which zone disappears is decided by comparing the ids. Say, the one
+  with the greater ID stays. Let's assume that ZA is decided to stay,
+  ZC should be merged into ZA.
+- E probably needs to sends a new SWIM message (zone merge?) to the
+  maintainer of ZC with information about ZA, that should be used.
+- C (the maintainer of ZC sends a rumor limited to ZC members to
+  change the zone to ZA)
+
+A(*ZA) --- B(ZA) ---\
+C(ZA) --- D(ZA) ------ E(ZA)
+
+
+
+A <-/- B
+
+- B sends ping to A
+- A settles its zone (ZA)
+- A notices that to_address and to_port in Ping are different than the
+  internal ones, so it puts them into the temporary AddressForZone
+  (contains nul zone uuid and a new address and port)
+- A sends an Ack message to B with from_address and from_port same as
+  to_address and to_port in Ping.
+- B receives the Ack message from A and notices that from_address and
+  from_port are different from A's internal address and port. So it
+  settles on its own zone (ZB) and sends an Ack message to A with an
+  updated zone information.
+- A receives an Ack message from B, updates the AddressForZone that
+  matches from_address and from_port in the Ack message with the new
+  zone information, if zone id is nul.
+
+A(*ZA) -/- B(*ZB)
+
+
+
+A(*ZA) -/- B(*ZB)
+     ^
+      \-/- C
+
+- same steps as above
+
+A(*ZA) -/- B(*ZB)
+     |
+      \-/- C(*ZC)
+
+- Eventually B learns about C and sends it a direct ping to C's internal address
+- ???
+
+
+
+TODO:
+zone should be loadable from file after supervisor restart (just like member is)
