@@ -142,19 +142,26 @@ Edited:
 Draft: establishing ring with zones
 
 A <-- B - B tries to join the ring by talking to A
-A <-/- B - same, but over the NAT boundary
+A <-/- B - same, but over the NAT boundary, from outside to inside
+TODO: come up with a notation for communication over NAT boundary, but from inside to outside
 A --- B - A and B form a ring
 A -/- B - same, but over the NAT boundary
 A(ZA) - A is in zone ZA
 A(*ZA) - A is a maintainer of zone ZA
 
 
+
 A <-- B
 
 - B sends ping to A
+  - no zone information in ping message
 - A settles its zone (ZA)
+  - generate a uuid for ZA
+  - set itself as a maintainer of ZA
+  - add ZA to its zone information
 - A sends an Ack message with from_address and from_swim_port set to
   to_address and to_swim_port in Ping message
+  - the message should contain information about the zone
 - B sees that A's address is the same as in from_address and from_port
   and overrides its zone with ZA.
 
@@ -171,6 +178,7 @@ A(*ZA) --- B(ZA) <-- C
   and overrides its zone with ZA.
 
 A(*ZA) --- B(ZA) --- C(ZA)
+
 
 
 A(*ZA) --- B(ZA) <--\
@@ -235,4 +243,20 @@ A(*ZA) -/- B(*ZB)
 
 
 TODO:
-zone should be loadable from file after supervisor restart (just like member is)
+
+Zone should be loadable from file after supervisor restart (just like
+member is).
+
+I ignored PingReq messages so far.
+
+Think more about the establishing the zones when talking over the
+boundary, especially when the initiator comes from inside the NAT. I
+think this will be possible only when we explicitly tell the
+supervisor inside the NAT about its exposed address, so the supervisor
+can fill the extra address info before sending the Ping message. This
+is for the supervisor that receives the Ping message, so it won't try
+to start merging the zones.
+
+Explain all the additions to the swim.proto file, so I don't have to
+recall everytime why I added that. Also, review some of them - maybe
+sometimes sending a uuid instead of full information could be enough.
