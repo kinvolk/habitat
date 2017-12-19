@@ -13,15 +13,15 @@ habitatConfig({
     // production mode
     environment: "production",
     // GitHub Client ID for GitHubApp
-    github_client_id: "Iv1.732260b62f84db15",
+    github_client_id: "Iv1.8320f422b89e5182",
     // The API URL for GitHub
     github_api_url: "https://api.github.com",
     // The Web URL for GitHub
     github_web_url: "https://github.com",
     // The Habitat Builder GitHub app
-    github_app_url: "https://github.com/apps/habitat-builder-dev",
+    github_app_url: "https://github.com/apps/habitat-dev-local",
     // The Habitat Builder GitHub app ID
-    github_app_id: "5629",
+    github_app_id: "6964",
     // The GitHub redirect URI. Must exactly match the value of the User Authorization Callback URL in the GitHub app.
     github_redirect_uri: "http://localhost:3000/",
     // The URL for the Habitat source code
