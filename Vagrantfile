@@ -7,8 +7,6 @@ Vagrant.configure("2") do |config|
   config.vm.provision "shell", path: "./support/linux/provision.sh", privileged: true
 
   config.vm.synced_folder ".", "/src"
-  config.vm.synced_folder "~/.hab/cache/keys", "/hab/cache/keys"
-  config.vm.synced_folder "~/.hab/etc", "/hab/etc"
 
   config.vm.network "private_network", ip: "192.168.198.7"
 
