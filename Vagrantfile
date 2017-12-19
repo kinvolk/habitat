@@ -7,8 +7,6 @@ Vagrant.configure("2") do |config|
   config.vm.provision "shell", path: "./support/linux/provision.sh", privileged: true
 
   config.vm.synced_folder ".", "/src"
-  config.vm.synced_folder "~/.hab/cache/keys", "/hab/cache/keys"
-  config.vm.synced_folder "~/.hab/etc", "/hab/etc"
 
   config.vm.network "forwarded_port", guest: 80, host: 9636
   config.vm.network "forwarded_port", guest: 9631, host: 9631
