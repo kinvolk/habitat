@@ -148,6 +148,19 @@ cp /hab/cache/keys/foo-20171103084851.* /home/krangschnak/.hab/cache/keys/
 
 TODO(schu): fix the weird key setup above ^
 
+Due to a
+[current bug](https://github.com/habitat-sh/habitat/issues/4371) in
+upstream you need to do the following to get the builds to work:
+
+`cp components/studio/libexec/hab-studio-type-default.sh /hab/pkg/core/hab-studio/<version>/<release>/libexec/`
+
+This copies the fix which has been cherry picked from
+[this PR](https://github.com/habitat-sh/habitat/pull/4392). I am not
+sure at the moment why copying the fix manually form the source tree
+is required even though the fix is already present. But if you check
+the file at the destination before copying from the source tree, you
+would notice that it does not contain the fixes.
+
 ## Troubleshooting
 
 * If you experience authentication failures, make sure the direnv is
