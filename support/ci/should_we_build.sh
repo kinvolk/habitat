@@ -14,6 +14,12 @@ echo "======================================================="
 echo "Testing whether or not we need to build ${package_name}"
 echo "======================================================="
 
+hab pkg install core/rq
+hab pkg binlink core/rq rq
+
+hab pkg install core/jq-static
+hab pkg binlink core/jq-static jq
+
 cat .bldr.toml | \
     rq --input-toml | \
     jq --exit-status '.["'${package_name}'"]' &>/dev/null
