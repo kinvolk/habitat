@@ -37,4 +37,14 @@ do_prepare() {
   PLAN_DOCKER_PKG_IDENT=$(pkg_path_for docker | sed "s,^$HAB_PKG_PATH/,,")
   export PLAN_DOCKER_PKG_IDENT
   build_line "Setting PLAN_DOCKER_PKG_IDENT=$PLAN_DOCKER_PKG_IDENT"
+
+  # Compile the fully-qualified Kubernetes exporter package identifier into the binary
+  PLAN_KUBERNETES_EXPORTER_PKG_IDENT=$(pkg_path_for hab-pkg-export-kubernetes | sed "s,^$HAB_PKG_PATH/,,")
+  export PLAN_KUBERNETES_EXPORTER_PKG_IDENT
+  build_line "Setting PLAN_KUBERNETES_EXPORTER_PKG_IDENT=$PLAN_KUBERNETES_EXPORTER_PKG_IDENT"
+
+  # Compile the fully-qualified Kubernetes package identifier into the binary
+  PLAN_KUBECTL_PKG_IDENT=$(pkg_path_for kubernetes | sed "s,^$HAB_PKG_PATH/,,")
+  export PLAN_KUBECTL_PKG_IDENT
+  build_line "Setting PLAN_KUBECTL_PKG_IDENT=$PLAN_KUBECTL_PKG_IDENT"
 }

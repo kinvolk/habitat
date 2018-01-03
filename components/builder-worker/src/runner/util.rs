@@ -19,6 +19,7 @@ use serde_json::{self, Value as JsonValue};
 
 use error::{Error, Result};
 use runner::docker::DockerExporterSpec;
+use runner::kubernetes::KubernetesExporterSpec;
 use runner::workspace::Workspace;
 
 // TODO fn: The horror... well, it's not that bad. There isn't a quick win for recursive chown'ing
@@ -47,15 +48,29 @@ pub fn chown_recursive<P: AsRef<Path>>(path: P, uid: u32, gid: u32) -> Result<()
 
 /// Validate integration data in job.
 pub fn validate_integrations(workspace: &Workspace) -> Result<()> {
+
+    validate_docker_integrations(workspace)?;
+    validate_kubernetes_integrations(workspace)?;
+
+    debug!("validated integrations");
+    Ok(())
+}
+
+fn validate_docker_integrations(workspace: &Workspace) -> Result<()> {
     // Validate project integration
     {
-        let prj_integrations = workspace.job.get_project_integrations();
-        if prj_integrations.is_empty() {
-            // No project integrations, that's cool, we're done!
-            return Ok(());
-        }
-
-        let prj_integration = prj_integrations.first().unwrap();
+        let prj_integration = match workspace
+            .job
+            .get_project_integrations()
+            .iter()
+            // .filter(|e| e.get_integration() == "docker")
+            .nth(0) {
+            Some(i) => i,
+            None => {
+                // No project integrations, that's cool, we're done!
+                return Ok(());
+            }
+        };
 
         // TODO fn: use a struct and serde to do heavy lifting
         let opts: JsonValue = match serde_json::from_str(prj_integration.get_body()) {
@@ -121,13 +136,19 @@ pub fn validate_integrations(workspace: &Workspace) -> Result<()> {
     }
     // Validate origin integration
     {
-        let org_integrations = workspace.job.get_integrations();
-        if org_integrations.is_empty() {
-            return Err(Error::InvalidIntegrations(format!(
-                "missing Docker credentials from origin integrations"
-            )));
-        }
-        let org_integration = org_integrations.first().unwrap();
+        let org_integration = match workspace
+            .job
+            .get_integrations()
+            .iter()
+            .filter(|e| e.get_integration() == "docker")
+            .nth(0) {
+            Some(i) => i,
+            None => {
+                return Err(Error::InvalidIntegrations(format!(
+                    "missing Docker credentials from origin integrations"
+                )));
+            }
+        };
 
         // TODO fn: use a struct and serde to do heavy lifting
         let creds: JsonValue = match serde_json::from_str(org_integration.get_body()) {
@@ -165,10 +186,131 @@ pub fn validate_integrations(workspace: &Workspace) -> Result<()> {
             }
         }
     }
-    debug!("validated integrations");
+    debug!("validated docker integrations");
     Ok(())
 }
 
+fn validate_kubernetes_integrations(workspace: &Workspace) -> Result<()> {
+    // Validate project integration
+    // {
+    //     let prj_integration = match workspace
+    //         .job
+    //         .get_project_integrations()
+    //         .iter()
+    //         .filter(|e| e.get_integration() == "kubernetes")
+    //         .nth(0) {
+    //         Some(i) => i,
+    //         None => {
+
+    //             // No project integrations, that's cool, we're done!
+    //             return Ok(());
+    //         }
+    //     };
+
+    //     // TODO fn: use a struct and serde to do heavy lifting
+    //     let opts: JsonValue = match serde_json::from_str(prj_integration.get_body()) {
+    //         Ok(json) => json,
+    //         Err(err) => {
+    //             return Err(Error::InvalidIntegrations(format!(
+    //                 "project integration body does not deserialize as JSON: {:?}",
+    //                 err
+    //             )))
+    //         }
+    //     };
+    //     // Required keys with string values
+    //     for int_key in vec!["replicas"].iter() {
+    //         match opts.get(int_key) {
+    //             Some(val) => {
+    //                 if !val.is_i64() {
+    //                     return Err(Error::InvalidIntegrations(format!(
+    //                         "project integration {} value must be an i64",
+    //                         int_key
+    //                     )));
+    //                 }
+    //             }
+    //             None => {
+    //                 return Err(Error::InvalidIntegrations(
+    //                     format!("origin integration {} missing", int_key),
+    //                 ));
+    //             }
+    //         }
+    //     }
+    // }
+    // Validate origin integration
+    {
+        let org_integration = match workspace
+            .job
+            .get_integrations()
+            .iter()
+            .filter(|e| e.get_integration() == "kubernetes")
+            .nth(0) {
+            Some(i) => i,
+            None => {
+                return Err(Error::InvalidIntegrations(format!(
+                    "missing Kubernetes kubeconfig from origin integrations"
+                )));
+            }
+        };
+
+        // TODO fn: use a struct and serde to do heavy lifting
+        let creds: JsonValue = match serde_json::from_str(org_integration.get_body()) {
+            Ok(json) => json,
+            Err(err) => {
+                return Err(Error::InvalidIntegrations(format!(
+                    "origin integration body does not deserialize as JSON: {:?}",
+                    err
+                )))
+            }
+        };
+        // Required keys with string values
+        for str_key in vec!["kubeconfig_path"].iter() {
+            match creds.get(str_key) {
+                Some(s) => {
+                    if s.is_string() {
+                        if s.as_str().unwrap().is_empty() {
+                            return Err(Error::InvalidIntegrations(format!(
+                                "origin integration {} value must be a nonempty string",
+                                str_key
+                            )));
+                        }
+                    } else {
+                        return Err(Error::InvalidIntegrations(format!(
+                            "origin integration {} value must be a string",
+                            str_key
+                        )));
+                    }
+                }
+                None => {
+                    return Err(Error::InvalidIntegrations(
+                        format!("origin integration {} missing", str_key),
+                    ));
+                }
+            }
+        }
+        // Required keys with string values
+        for int_key in vec!["replicas"].iter() {
+            match creds.get(int_key) {
+                Some(val) => {
+                    if !val.is_i64() {
+                        return Err(Error::InvalidIntegrations(format!(
+                            "project integration {} value must be an i64",
+                            int_key
+                        )));
+                    }
+                }
+                None => {
+                    return Err(Error::InvalidIntegrations(
+                        format!("origin integration {} missing", int_key),
+                    ));
+                }
+            }
+        }
+
+    }
+
+    debug!("validated kubernetes integrations");
+    Ok(())
+}
 
 /// Builds the Docker exporter details from the origin and project integrations.
 pub fn docker_exporter_spec(workspace: &Workspace) -> DockerExporterSpec {
@@ -180,9 +322,13 @@ pub fn docker_exporter_spec(workspace: &Workspace) -> DockerExporterSpec {
     // above. As a result, Any panics that occur are most likely due to programmer error and not
     // input validation.
 
-    let origin_integration = workspace.job.get_integrations().first().expect(
-        "Origin integrations must not be empty",
-    );
+    let origin_integration = workspace
+        .job
+        .get_integrations()
+        .iter()
+        .filter(|e| e.get_integration() == "docker")
+        .nth(0)
+        .expect("Origin integrations must not be empty");
 
     let creds: JsonValue = serde_json::from_str(origin_integration.get_body()).expect(
         "Origin integrations body must be JSON",
@@ -192,7 +338,9 @@ pub fn docker_exporter_spec(workspace: &Workspace) -> DockerExporterSpec {
         workspace
             .job
             .get_project_integrations()
-            .first()
+            .iter()
+            // .filter(|e| e.get_integration() == "docker")
+            .nth(0)
             .expect("Project integrations must not be empty")
             .get_body(),
     ).expect("Project integrations body must be JSON");
@@ -234,6 +382,46 @@ pub fn docker_exporter_spec(workspace: &Workspace) -> DockerExporterSpec {
             .as_bool()
             .expect("version_release_tag value is a bool"),
         custom_tag: custom_tag,
+    }
+}
+
+/// Builds the Docker exporter details from the origin and project integrations.
+pub fn kubernetes_exporter_spec(workspace: &Workspace) -> KubernetesExporterSpec {
+
+    let creds: JsonValue = serde_json::from_str(
+        workspace
+            .job
+            .get_integrations()
+            .iter()
+            .filter(|e| e.get_integration() == "kubernetes")
+            .nth(0)
+            .expect("Origin integration for kubernetes must not be empty")
+            .get_body(),
+    ).expect("Origin integration body must be JSON");
+
+
+    // let opts: JsonValue = serde_json::from_str(
+    //     workspace
+    //         .job
+    //         .get_project_integrations()
+    //         .iter()
+    //         .filter(|e| e.get_integration() == "kubernetes")
+    //         .nth(0)
+    //         .expect("Kubernetes integration must be set")
+    //         .get_body(),
+    // ).expect("Project integration body must be JSON");
+
+    KubernetesExporterSpec {
+        kubeconfig_path: creds
+            .get("kubeconfig_path")
+            .expect("kubeconfig_path key is present")
+            .as_str()
+            .expect("kubeconfig_path value is a string")
+            .to_string(),
+        replicas: creds.get("replicas")
+            .expect("replicas key is present")
+            .as_i64()
+            .expect("replicas value is an i64"),
     }
 }
 

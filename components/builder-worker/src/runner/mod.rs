@@ -14,6 +14,7 @@
 
 pub mod studio;
 mod docker;
+mod kubernetes;
 mod log_pipe;
 mod postprocessor;
 mod publisher;
@@ -46,6 +47,7 @@ use self::log_pipe::LogPipe;
 use self::postprocessor::post_process;
 use self::studio::{key_path, Studio, STUDIO_GROUP, STUDIO_USER};
 use self::docker::DockerExporter;
+use self::kubernetes::KubernetesExporter;
 use self::workspace::Workspace;
 use config::Config;
 use error::{Error, Result};
@@ -401,6 +403,23 @@ impl Runner {
             }
         }
 
+        if self.has_kubernetes_integration() {
+            if self.workspace.last_built()?.is_a_service() {
+                debug!("Found runnable package, running kubernetes export");
+                log_pipe.pipe_stdout(
+                    b"\n--- BEGIN: Kubernetes export ---\n",
+                )?;
+                status = KubernetesExporter::new(
+                    util::kubernetes_exporter_spec(&self.workspace),
+                    &self.workspace,
+                    &self.config.bldr_url,
+                ).export(&mut log_pipe)?;
+                log_pipe.pipe_stdout(b"\n--- END: Kubernetes export ---\n")?;
+            } else {
+                debug!("Package not runnable, skipping kubernetes export");
+            }
+        }
+
         if status.success() {
             self.workspace.last_built()
         } else {
@@ -502,7 +521,13 @@ impl Runner {
     /// and we are assuming that any calls to this method will happen after the integration data
     /// has been validated.
     fn has_docker_integration(&self) -> bool {
+        // TODO: needs to be changed to fit kubernetes exporter
         !self.workspace.job.get_project_integrations().is_empty()
+    }
+
+    fn has_kubernetes_integration(&self) -> bool {
+        // TODO: how should this be done as ^ won't work anymore
+        true
     }
 }
 
