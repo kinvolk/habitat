@@ -29,7 +29,7 @@ impl FromStr for Bind {
 
     fn from_str(bind_spec: &str) -> Result<Self, Error> {
         let split: Vec<&str> = bind_spec.split(":").collect();
-        if split.len() < 3 {
+        if split.len() != 3 {
             return Err(Error::InvalidBindSpec(bind_spec.to_owned()));
         }
 
