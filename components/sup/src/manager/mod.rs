@@ -288,7 +288,6 @@ impl Manager {
         let services = Arc::new(RwLock::new(Vec::new()));
         let server = butterfly::Server::new(
             sys.gossip_listen(),
-            sys.gossip_listen(),
             member,
             Trace::default(),
             ring_key,
@@ -532,7 +531,7 @@ impl Manager {
 
         outputln!(
             "Starting gossip-listener on {}",
-            self.butterfly.gossip_addr()
+            self.butterfly.swim_gossip_addr()
         );
         self.butterfly.start(Timing::default())?;
         debug!("gossip-listener started");
