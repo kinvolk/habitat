@@ -29,8 +29,6 @@ use error::{Result, Error};
 
 use zmq;
 
-use ServerContext;
-
 /// A trait for types that can fail when cloning. Mostly meant for
 /// things like communication channels which usually use some
 /// operating system resources and because of it, cloning/duplicating
@@ -140,6 +138,20 @@ impl GossipReceiver for GossipZmqSocket {
         })
     }
 }
+
+/// This is a wrapper to provide interior mutability of an underlying
+/// `zmq::Context` and allows for sharing/sending of a `zmq::Context`
+/// between threads.
+struct ServerContext(UnsafeCell<zmq::Context>);
+
+impl ServerContext {
+    pub fn as_mut(&self) -> &mut zmq::Context {
+        unsafe { &mut *self.0.get() }
+    }
+}
+
+unsafe impl Send for ServerContext {}
+unsafe impl Sync for ServerContext {}
 
 /// An implementation of the `Network` trait that creates
 /// `SwimUdpSocket` instances for SWIM communication, and
