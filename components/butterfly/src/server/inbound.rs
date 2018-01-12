@@ -16,7 +16,6 @@
 //!
 //! This module handles all the inbound SWIM messages.
 
-use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
@@ -24,28 +23,33 @@ use std::time::Duration;
 
 use protobuf;
 
+use error::Error;
 use member::{Health, Member};
 use message::swim::{Swim, Swim_Type};
+use network::{AddressAndPort, MyFromStr, Network, SwimReceiver};
 use server::{outbound, Server};
 use trace::TraceKind;
 
 /// Takes the Server and a channel to send received Acks to the outbound thread.
-pub struct Inbound {
-    pub server: Server,
-    pub socket: UdpSocket,
-    pub tx_outbound: mpsc::Sender<(SocketAddr, Swim)>,
+pub struct Inbound<N: Network> {
+    pub server: Server<N>,
+    pub swim_receiver: N::SwimReceiver,
+    pub swim_sender: N::SwimSender,
+    pub tx_outbound: mpsc::Sender<(N::AddressAndPort, Swim)>,
 }
 
-impl Inbound {
+impl<N: Network> Inbound<N> {
     /// Create a new Inbound.
     pub fn new(
-        server: Server,
-        socket: UdpSocket,
-        tx_outbound: mpsc::Sender<(SocketAddr, Swim)>,
-    ) -> Inbound {
-        Inbound {
+        server: Server<N>,
+        swim_receiver: N::SwimReceiver,
+        swim_sender: N::SwimSender,
+        tx_outbound: mpsc::Sender<(N::AddressAndPort, Swim)>,
+    ) -> Self {
+        Self {
             server: server,
-            socket: socket,
+            swim_receiver: swim_receiver,
+            swim_sender: swim_sender,
             tx_outbound: tx_outbound,
         }
     }
@@ -58,7 +62,7 @@ impl Inbound {
                 thread::sleep(Duration::from_millis(100));
                 continue;
             }
-            match self.socket.recv_from(&mut recv_buffer[..]) {
+            match self.swim_receiver.receive(&mut recv_buffer[..]) {
                 Ok((length, addr)) => {
                     let swim_payload = match self.server.unwrap_wire(&recv_buffer[0..length]) {
                         Ok(swim_payload) => swim_payload,
@@ -120,26 +124,29 @@ impl Inbound {
                         }
                     }
                 }
-                Err(e) => {
+                Err(Error::SwimReceiveIOError(e)) => {
                     match e.raw_os_error() {
                         Some(35) | Some(11) | Some(10035) | Some(10060) => {
                             // This is the normal non-blocking result, or a timeout
                         }
                         Some(_) => {
-                            error!("UDP Receive error: {}", e);
-                            debug!("UDP Receive error debug: {:?}", e);
+                            error!("SWIM Receive error: {}", e);
+                            debug!("SWIM Receive error debug: {:?}", e);
                         }
                         None => {
-                            error!("UDP Receive error: {}", e);
+                            error!("SWIM Receive error: {}", e);
                         }
                     }
+                }
+                Err(e) => {
+                    error!("SWIM Receive error: {}", e);
                 }
             }
         }
     }
 
     /// Process pingreq messages.
-    fn process_pingreq(&self, addr: SocketAddr, mut msg: Swim) {
+    fn process_pingreq(&self, addr: N::AddressAndPort, mut msg: Swim) {
         trace_it!(SWIM: &self.server,
                   TraceKind::RecvPingReq,
                   msg.get_pingreq().get_from().get_id(),
@@ -158,10 +165,10 @@ impl Inbound {
             };
             // Set the route-back address to the one we received the pingreq from
             let mut from = msg.mut_pingreq().take_from();
-            from.set_address(format!("{}", addr.ip()));
+            from.set_address(format!("{}", addr.get_address()));
             outbound::ping(
                 &self.server,
-                &self.socket,
+                &self.swim_sender,
                 target,
                 target.swim_socket_address(),
                 Some(from.into()),
@@ -170,7 +177,7 @@ impl Inbound {
     }
 
     /// Process ack messages; forwards to the outbound thread.
-    fn process_ack(&self, addr: SocketAddr, mut msg: Swim) {
+    fn process_ack(&self, addr: N::AddressAndPort, mut msg: Swim) {
         trace_it!(SWIM: &self.server,
                   TraceKind::RecvAck,
                   msg.get_ack().get_from().get_id(),
@@ -184,7 +191,7 @@ impl Inbound {
                     msg.get_ack().get_forward_to().get_address(),
                     msg.get_ack().get_forward_to().get_swim_port()
                 );
-                let forward_to_addr = match forward_addr_str.parse() {
+                let forward_to_addr = match N::AddressAndPort::create_from_str(&forward_addr_str) {
                     Ok(addr) => addr,
                     Err(e) => {
                         error!(
@@ -204,8 +211,8 @@ impl Inbound {
                 );
                 msg.mut_ack()
                     .mut_from()
-                    .set_address(format!("{}", addr.ip()));
-                outbound::forward_ack(&self.server, &self.socket, forward_to_addr, msg);
+                    .set_address(format!("{}", addr.get_address()));
+                outbound::forward_ack(&self.server, &self.swim_sender, forward_to_addr, msg);
                 return;
             }
         }
@@ -224,7 +231,7 @@ impl Inbound {
     }
 
     /// Process ping messages.
-    fn process_ping(&self, addr: SocketAddr, mut msg: Swim) {
+    fn process_ping(&self, addr: N::AddressAndPort, mut msg: Swim) {
         trace_it!(SWIM: &self.server,
                   TraceKind::RecvPing,
                   msg.get_ping().get_from().get_id(),
@@ -234,19 +241,19 @@ impl Inbound {
         if msg.get_ping().has_forward_to() {
             outbound::ack(
                 &self.server,
-                &self.socket,
+                &self.swim_sender,
                 &target,
                 addr,
                 Some(msg.mut_ping().take_forward_to().into()),
             );
         } else {
-            outbound::ack(&self.server, &self.socket, &target, addr, None);
+            outbound::ack(&self.server, &self.swim_sender, &target, addr, None);
         }
         // Populate the member for this sender with its remote address
         let from = {
             let ping = msg.mut_ping();
             let mut from = ping.take_from();
-            from.set_address(format!("{}", addr.ip()));
+            from.set_address(format!("{}", addr.get_address()));
             from
         };
         trace!("Ping from {}@{}", from.get_id(), addr);

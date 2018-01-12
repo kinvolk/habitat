@@ -17,7 +17,6 @@
 use std::collections::{hash_map, HashMap};
 use std::fmt;
 use std::iter::IntoIterator;
-use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::result;
 use std::str::FromStr;
@@ -34,6 +33,7 @@ use uuid::Uuid;
 use error::Error;
 use message::swim::{Member as ProtoMember, Membership as ProtoMembership,
                     Membership_Health as ProtoMembership_Health, Rumor_Type};
+use network::{AddressAndPort, MyFromStr};
 use rumor::RumorKey;
 
 /// How many nodes do we target when we need to run PingReq.
@@ -128,16 +128,32 @@ pub struct Member {
 }
 
 impl Member {
-    /// Returns the socket address of this member.
+    /// Returns the swim socket address of this member.
     ///
     /// # Panics
     ///
     /// This function panics if the address is un-parseable. In practice, it shouldn't be
     /// un-parseable, since its set from the inbound socket directly.
-    pub fn swim_socket_address(&self) -> SocketAddr {
-        let address_str = format!("{}:{}", self.get_address(), self.get_swim_port());
-        match address_str.parse() {
-            Ok(addr) => addr,
+    pub fn swim_socket_address<T: AddressAndPort>(&self) -> T {
+        self.socket_address(self.get_swim_port())
+    }
+
+    /// Returns the gossip socket address of this member.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the address is un-parseable. In practice, it shouldn't be
+    /// un-parseable, since its set from the inbound socket directly.
+    pub fn gossip_socket_address<T: AddressAndPort>(&self) -> T {
+        self.socket_address(self.get_gossip_port())
+    }
+
+    fn socket_address<T>(&self, port: i32) -> T
+    where
+        T: AddressAndPort,
+    {
+        match T::Address::create_from_str(self.get_address()) {
+            Ok(addr) => T::new_from_address_and_port(addr, port as u16),
             Err(e) => {
                 panic!("Cannot parse member {:?} address: {}", self, e);
             }

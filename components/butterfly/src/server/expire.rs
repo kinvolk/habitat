@@ -24,20 +24,21 @@ use time::SteadyTime;
 
 use member::Health;
 use message::swim::Rumor_Type;
+use network::Network;
 use rumor::RumorKey;
 use server::timing::Timing;
 use server::Server;
 use trace::TraceKind;
 
-pub struct Expire {
-    pub server: Server,
+pub struct Expire<N: Network> {
+    pub server: Server<N>,
     pub timing: Timing,
 }
 
-impl Expire {
+impl<N: Network> Expire<N> {
     /// Takes a reference to a server, and a `Timing`, returns you an Expire struct.
-    pub fn new(server: Server, timing: Timing) -> Expire {
-        Expire {
+    pub fn new(server: Server<N>, timing: Timing) -> Self {
+        Self {
             server: server,
             timing: timing,
         }

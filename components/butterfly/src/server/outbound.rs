@@ -17,7 +17,6 @@
 //! This module handles the implementation of the swim probe protocol.
 
 use std::fmt;
-use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
@@ -28,6 +27,7 @@ use time::SteadyTime;
 
 use member::{Health, Member};
 use message::swim::{Ack, Ping, PingReq, Rumor_Type, Swim, Swim_Type};
+use network::{AddressAndPort, Network, SwimSender};
 use rumor::RumorKey;
 use server::timing::Timing;
 use server::Server;
@@ -53,24 +53,24 @@ impl fmt::Display for AckFrom {
 }
 
 /// The outbound thread
-pub struct Outbound {
-    pub server: Server,
-    pub socket: UdpSocket,
-    pub rx_inbound: mpsc::Receiver<(SocketAddr, Swim)>,
+pub struct Outbound<N: Network> {
+    pub server: Server<N>,
+    pub swim_sender: N::SwimSender,
+    pub rx_inbound: mpsc::Receiver<(N::AddressAndPort, Swim)>,
     pub timing: Timing,
 }
 
-impl Outbound {
+impl<N: Network> Outbound<N> {
     /// Creates a new Outbound struct.
     pub fn new(
-        server: Server,
-        socket: UdpSocket,
-        rx_inbound: mpsc::Receiver<(SocketAddr, Swim)>,
+        server: Server<N>,
+        swim_sender: N::SwimSender,
+        rx_inbound: mpsc::Receiver<(N::AddressAndPort, Swim)>,
         timing: Timing,
-    ) -> Outbound {
-        Outbound {
+    ) -> Self {
+        Self {
             server: server,
-            socket: socket,
+            swim_sender: swim_sender,
             rx_inbound: rx_inbound,
             timing: timing,
         }
@@ -96,7 +96,7 @@ impl Outbound {
                         self.server.member_list.with_initial_members(|member| {
                             ping(
                                 &self.server,
-                                &self.socket,
+                                &self.swim_sender,
                                 &member,
                                 member.swim_socket_address(),
                                 None,
@@ -174,7 +174,7 @@ impl Outbound {
         trace_it!(PROBE: &self.server, TraceKind::ProbeBegin, member.get_id(), addr);
 
         // Ping the member, and wait for the ack.
-        ping(&self.server, &self.socket, &member, addr, None);
+        ping(&self.server, &self.swim_sender, &member, addr, None);
         if self.recv_ack(&member, addr, AckFrom::Ping) {
             trace_it!(PROBE: &self.server, TraceKind::ProbeAckReceived, member.get_id(), addr);
             trace_it!(PROBE: &self.server, TraceKind::ProbeComplete, member.get_id(), addr);
@@ -189,7 +189,7 @@ impl Outbound {
                           TraceKind::ProbePingReq,
                           pingreq_target.get_id(),
                           pingreq_target.get_address());
-                pingreq(&self.server, &self.socket, &pingreq_target, &member);
+                pingreq(&self.server, &self.swim_sender, &pingreq_target, &member);
             },
         );
         if !self.recv_ack(&member, addr, AckFrom::PingReq) {
@@ -206,7 +206,7 @@ impl Outbound {
     }
 
     /// Listen for an ack from the `Inbound` thread.
-    fn recv_ack(&mut self, member: &Member, addr: SocketAddr, ack_from: AckFrom) -> bool {
+    fn recv_ack(&mut self, member: &Member, addr: N::AddressAndPort, ack_from: AckFrom) -> bool {
         let timeout = match ack_from {
             AckFrom::Ping => self.timing.ping_timeout(),
             AckFrom::PingReq => self.timing.pingreq_timeout(),
@@ -219,7 +219,7 @@ impl Outbound {
                     // If this was forwarded to us, we want to retain the address of the member who
                     // sent the ack, not the one we received on the socket.
                     if !swim.get_ack().has_forward_to() {
-                        ack_from.set_address(format!("{}", real_addr.ip()));
+                        ack_from.set_address(format!("{}", real_addr.get_address()));
                     }
                     let is_departed = ack_from.get_departed();
                     let ack_from_member: Member = ack_from.into();
@@ -261,7 +261,11 @@ impl Outbound {
 }
 
 /// Populate a SWIM message with rumors.
-pub fn populate_membership_rumors(server: &Server, target: &Member, swim: &mut Swim) {
+pub fn populate_membership_rumors<N: Network>(
+    server: &Server<N>,
+    target: &Member,
+    swim: &mut Swim,
+) {
     let mut membership_entries = RepeatedField::new();
     // If this isn't the first time we are communicating with this target, we want to include this
     // targets current status. This ensures that members always get a "Confirmed" rumor, before we
@@ -296,7 +300,12 @@ pub fn populate_membership_rumors(server: &Server, target: &Member, swim: &mut S
 }
 
 /// Send a PingReq.
-pub fn pingreq(server: &Server, socket: &UdpSocket, pingreq_target: &Member, target: &Member) {
+pub fn pingreq<N: Network>(
+    server: &Server<N>,
+    swim_sender: &N::SwimSender,
+    pingreq_target: &Member,
+    target: &Member,
+) {
     let addr = pingreq_target.swim_socket_address();
     let mut swim = Swim::new();
     swim.set_field_type(Swim_Type::PINGREQ);
@@ -322,20 +331,20 @@ pub fn pingreq(server: &Server, socket: &UdpSocket, pingreq_target: &Member, tar
             return;
         }
     };
-    match socket.send_to(&payload, addr) {
+    match swim_sender.send(&payload, addr) {
         Ok(_s) => trace!(
             "Sent PingReq to {}@{} for {}@{}",
             pingreq_target.get_id(),
             addr,
             target.get_id(),
-            target.swim_socket_address()
+            target.swim_socket_address::<N::AddressAndPort>()
         ),
         Err(e) => error!(
             "Failed PingReq to {}@{} for {}@{}: {}",
             pingreq_target.get_id(),
             addr,
             target.get_id(),
-            target.swim_socket_address(),
+            target.swim_socket_address::<N::AddressAndPort>(),
             e
         ),
     }
@@ -349,11 +358,11 @@ pub fn pingreq(server: &Server, socket: &UdpSocket, pingreq_target: &Member, tar
 }
 
 /// Send a Ping.
-pub fn ping(
-    server: &Server,
-    socket: &UdpSocket,
+pub fn ping<N: Network>(
+    server: &Server<N>,
+    swim_sender: &N::SwimSender,
     target: &Member,
-    addr: SocketAddr,
+    addr: N::AddressAndPort,
     mut forward_to: Option<Member>,
 ) {
     let mut swim = Swim::new();
@@ -385,7 +394,7 @@ pub fn ping(
         }
     };
 
-    match socket.send_to(&payload, addr) {
+    match swim_sender.send(&payload, addr) {
         Ok(_s) => {
             if forward_to.is_some() {
                 trace!(
@@ -410,7 +419,12 @@ pub fn ping(
 }
 
 /// Forward an ack on.
-pub fn forward_ack(server: &Server, socket: &UdpSocket, addr: SocketAddr, swim: Swim) {
+pub fn forward_ack<N: Network>(
+    server: &Server<N>,
+    swim_sender: &N::SwimSender,
+    addr: N::AddressAndPort,
+    swim: Swim,
+) {
     trace_it!(
         SWIM: server,
         TraceKind::SendForwardAck,
@@ -434,7 +448,7 @@ pub fn forward_ack(server: &Server, socket: &UdpSocket, addr: SocketAddr, swim: 
         }
     };
 
-    match socket.send_to(&payload, addr) {
+    match swim_sender.send(&payload, addr) {
         Ok(_s) => trace!(
             "Forwarded ack to {}@{}",
             swim.get_ack().get_from().get_id(),
@@ -450,11 +464,11 @@ pub fn forward_ack(server: &Server, socket: &UdpSocket, addr: SocketAddr, swim: 
 }
 
 /// Send an Ack.
-pub fn ack(
-    server: &Server,
-    socket: &UdpSocket,
+pub fn ack<N: Network>(
+    server: &Server<N>,
+    swim_sender: &N::SwimSender,
     target: &Member,
-    addr: SocketAddr,
+    addr: N::AddressAndPort,
     mut forward_to: Option<Member>,
 ) {
     let mut swim = Swim::new();
@@ -486,7 +500,7 @@ pub fn ack(
         }
     };
 
-    match socket.send_to(&payload, addr) {
+    match swim_sender.send(&payload, addr) {
         Ok(_s) => trace!(
             "Sent ack to {}@{}",
             swim.get_ack().get_from().get_id(),
