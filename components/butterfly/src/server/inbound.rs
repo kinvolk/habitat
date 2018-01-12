@@ -18,32 +18,34 @@
 
 use std::sync::mpsc;
 use std::sync::atomic::Ordering;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 use std::thread;
 use std::time::Duration;
 
 use protobuf;
 
+use error::Error;
 use member::{Member, Health};
 use message::swim::{Swim, Swim_Type};
 use server::{Server, outbound};
 use trace::TraceKind;
+use network::{Network, SwimChannel};
 
 /// Takes the Server and a channel to send received Acks to the outbound thread.
-pub struct Inbound {
-    pub server: Server,
-    pub socket: UdpSocket,
+pub struct Inbound<N: Network> {
+    pub server: Server<N>,
+    pub socket: N::SwimChannel,
     pub tx_outbound: mpsc::Sender<(SocketAddr, Swim)>,
 }
 
-impl Inbound {
+impl<N: Network> Inbound<N> {
     /// Create a new Inbound.
     pub fn new(
-        server: Server,
-        socket: UdpSocket,
+        server: Server<N>,
+        socket: N::SwimChannel,
         tx_outbound: mpsc::Sender<(SocketAddr, Swim)>,
-    ) -> Inbound {
-        Inbound {
+    ) -> Self {
+        Self {
             server: server,
             socket: socket,
             tx_outbound: tx_outbound,
@@ -58,7 +60,7 @@ impl Inbound {
                 thread::sleep(Duration::from_millis(100));
                 continue;
             }
-            match self.socket.recv_from(&mut recv_buffer[..]) {
+            match self.socket.receive(&mut recv_buffer[..]) {
                 Ok((length, addr)) => {
                     let swim_payload = match self.server.unwrap_wire(&recv_buffer[0..length]) {
                         Ok(swim_payload) => swim_payload,
@@ -122,19 +124,22 @@ impl Inbound {
                         }
                     }
                 }
-                Err(e) => {
+                Err(Error::SwimReceiveError(e)) => {
                     match e.raw_os_error() {
                         Some(35) | Some(11) | Some(10035) | Some(10060) => {
                             // This is the normal non-blocking result, or a timeout
                         }
                         Some(_) => {
-                            error!("UDP Receive error: {}", e);
-                            debug!("UDP Receive error debug: {:?}", e);
+                            error!("SWIM Receive error: {}", e);
+                            debug!("SWIM Receive error debug: {:?}", e);
                         }
                         None => {
-                            error!("UDP Receive error: {}", e);
+                            error!("SWIM Receive error: {}", e);
                         }
                     }
+                }
+                Err(e) => {
+                    error!("SWIM Receive error: {}", e);
                 }
             }
         }
