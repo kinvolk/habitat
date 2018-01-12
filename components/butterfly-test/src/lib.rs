@@ -29,9 +29,10 @@ use std::time::Duration;
 
 use time::SteadyTime;
 
+use habitat_butterfly::client::Client;
 use habitat_butterfly::member::{Health, Member};
 use habitat_butterfly::message::swim::Election_Status;
-use habitat_butterfly::network::RealNetwork;
+use habitat_butterfly::network::{GossipZmqSocket, Network, RealNetwork};
 use habitat_butterfly::rumor::departure::Departure;
 use habitat_butterfly::rumor::service::{Service, SysInfo};
 use habitat_butterfly::rumor::service_config::ServiceConfig;
@@ -44,6 +45,14 @@ use habitat_core::package::{Identifiable, PackageIdent};
 use habitat_core::service::ServiceGroup;
 
 static SERVER_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
+
+pub fn get_client_for_address(addr: SocketAddr) -> Client<GossipZmqSocket> {
+    let network = RealNetwork::new_for_client();
+    let sender = network
+        .create_gossip_sender(addr)
+        .expect("Cannot create gossip socket");
+    Client::new(sender, None)
+}
 
 #[derive(Debug)]
 struct NSuitability(u64);
