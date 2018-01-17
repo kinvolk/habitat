@@ -34,7 +34,7 @@ use network::{Network, SwimChannel};
 /// Takes the Server and a channel to send received Acks to the outbound thread.
 pub struct Inbound<N: Network> {
     pub server: Server<N>,
-    pub socket: N::SwimChannel,
+    pub swim_channel: N::SwimChannel,
     pub tx_outbound: mpsc::Sender<(SocketAddr, Swim)>,
 }
 
@@ -42,12 +42,12 @@ impl<N: Network> Inbound<N> {
     /// Create a new Inbound.
     pub fn new(
         server: Server<N>,
-        socket: N::SwimChannel,
+        swim_channel: N::SwimChannel,
         tx_outbound: mpsc::Sender<(SocketAddr, Swim)>,
     ) -> Self {
         Self {
             server: server,
-            socket: socket,
+            swim_channel: swim_channel,
             tx_outbound: tx_outbound,
         }
     }
@@ -60,7 +60,7 @@ impl<N: Network> Inbound<N> {
                 thread::sleep(Duration::from_millis(100));
                 continue;
             }
-            match self.socket.receive(&mut recv_buffer[..]) {
+            match self.swim_channel.receive(&mut recv_buffer[..]) {
                 Ok((length, addr)) => {
                     let swim_payload = match self.server.unwrap_wire(&recv_buffer[0..length]) {
                         Ok(swim_payload) => swim_payload,
@@ -168,7 +168,7 @@ impl<N: Network> Inbound<N> {
             from.set_address(format!("{}", addr.ip()));
             outbound::ping(
                 &self.server,
-                &self.socket,
+                &self.swim_channel,
                 target,
                 target.swim_socket_address(),
                 Some(from.into()),
@@ -211,7 +211,7 @@ impl<N: Network> Inbound<N> {
                 msg.mut_ack().mut_from().set_address(
                     format!("{}", addr.ip()),
                 );
-                outbound::forward_ack(&self.server, &self.socket, forward_to_addr, msg);
+                outbound::forward_ack(&self.server, &self.swim_channel, forward_to_addr, msg);
                 return;
             }
         }
@@ -242,13 +242,13 @@ impl<N: Network> Inbound<N> {
         if msg.get_ping().has_forward_to() {
             outbound::ack(
                 &self.server,
-                &self.socket,
+                &self.swim_channel,
                 &target,
                 addr,
                 Some(msg.mut_ping().take_forward_to().into()),
             );
         } else {
-            outbound::ack(&self.server, &self.socket, &target, addr, None);
+            outbound::ack(&self.server, &self.swim_channel, &target, addr, None);
         }
         // Populate the member for this sender with its remote address
         let from = {

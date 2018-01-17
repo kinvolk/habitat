@@ -82,7 +82,7 @@ pub struct Server<N: Network> {
     suitability_lookup: Arc<Box<Suitability>>,
     data_path: Arc<Option<PathBuf>>,
     dat_file: Arc<RwLock<Option<DatFile>>>,
-    socket: Option<N::SwimChannel>,
+    swim_channel: Option<N::SwimChannel>,
     departed: Arc<AtomicBool>,
     pub network: Arc<RwLock<N>>,
     // These are all here for testing support
@@ -118,7 +118,7 @@ impl<N: Network> Clone for Server<N> {
             swim_rounds: self.swim_rounds.clone(),
             gossip_rounds: self.gossip_rounds.clone(),
             blacklist: self.blacklist.clone(),
-            socket: None,
+            swim_channel: None,
         }
     }
 }
@@ -163,7 +163,7 @@ impl<N: Network> Server<N> {
             swim_rounds: Arc::new(AtomicIsize::new(0)),
             gossip_rounds: Arc::new(AtomicIsize::new(0)),
             blacklist: Arc::new(RwLock::new(HashSet::new())),
-            socket: None,
+            swim_channel: None,
         }
     }
 
@@ -241,35 +241,35 @@ impl<N: Network> Server<N> {
             *dat_file = Some(file);
         }
 
-        let socket = self.read_network().get_swim_channel()?;
+        let swim_channel = self.read_network().get_swim_channel()?;
         let server_a = self.clone();
-        let socket_a = match socket.try_clone() {
-            Ok(socket_a) => socket_a,
-            Err(_) => return Err(Error::SocketCloneError),
+        let swim_channel_a = match swim_channel.try_clone() {
+            Ok(swim_channel_a) => swim_channel_a,
+            Err(_) => return Err(Error::SwimChannelCloneError),
         };
-        let socket_expire = match socket.try_clone() {
-            Ok(socket_expire) => socket_expire,
-            Err(_) => return Err(Error::SocketCloneError),
+        let swim_channel_expire = match swim_channel.try_clone() {
+            Ok(swim_channel_expire) => swim_channel_expire,
+            Err(_) => return Err(Error::SwimChannelCloneError),
         };
-        self.socket = Some(socket_expire);
+        self.swim_channel = Some(swim_channel_expire);
 
         let _ = thread::Builder::new()
             .name(format!("inbound-{}", self.name()))
             .spawn(move || {
-                inbound::Inbound::new(server_a, socket_a, tx_outbound).run();
+                inbound::Inbound::new(server_a, swim_channel_a, tx_outbound).run();
                 panic!("You should never, ever get here, judy");
             });
 
         let server_b = self.clone();
-        let socket_b = match socket.try_clone() {
-            Ok(socket_b) => socket_b,
-            Err(_) => return Err(Error::SocketCloneError),
+        let swim_channel_b = match swim_channel.try_clone() {
+            Ok(swim_channel_b) => swim_channel_b,
+            Err(_) => return Err(Error::SwimChannelCloneError),
         };
         let timing_b = timing.clone();
         let _ = thread::Builder::new()
             .name(format!("outbound-{}", self.name()))
             .spawn(move || {
-                outbound::Outbound::new(server_b, socket_b, rx_inbound, timing_b).run();
+                outbound::Outbound::new(server_b, swim_channel_b, rx_inbound, timing_b).run();
                 panic!("You should never, ever get here, bob");
             });
 
@@ -435,7 +435,7 @@ impl<N: Network> Server<N> {
     /// Set our member to departed, then send up to 10 out of order ack messages to other
     /// members to seed our status.
     pub fn set_departed(&self) {
-        if self.socket.is_some() {
+        if self.swim_channel.is_some() {
             let member = {
                 let mut me = self.member.write().expect("Member lock is poisoned");
                 let mut incarnation = me.get_incarnation();
@@ -462,7 +462,13 @@ impl<N: Network> Server<N> {
             for member in check_list.iter().take(10) {
                 let addr = member.swim_socket_address();
                 // Safe because we checked above
-                outbound::ack(&self, self.socket.as_ref().unwrap(), member, addr, None);
+                outbound::ack(
+                    &self,
+                    self.swim_channel.as_ref().unwrap(),
+                    member,
+                    addr,
+                    None,
+                );
             }
         } else {
             debug!("No socket present; server was never started, so nothing to depart");

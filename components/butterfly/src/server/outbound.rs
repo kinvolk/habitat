@@ -56,7 +56,7 @@ impl fmt::Display for AckFrom {
 /// The outbound thread
 pub struct Outbound<N: Network> {
     pub server: Server<N>,
-    pub socket: N::SwimChannel,
+    pub swim_channel: N::SwimChannel,
     pub rx_inbound: mpsc::Receiver<(SocketAddr, Swim)>,
     pub timing: Timing,
 }
@@ -65,13 +65,13 @@ impl<N: Network> Outbound<N> {
     /// Creates a new Outbound struct.
     pub fn new(
         server: Server<N>,
-        socket: N::SwimChannel,
+        swim_channel: N::SwimChannel,
         rx_inbound: mpsc::Receiver<(SocketAddr, Swim)>,
         timing: Timing,
     ) -> Self {
         Self {
             server: server,
-            socket: socket,
+            swim_channel: swim_channel,
             rx_inbound: rx_inbound,
             timing: timing,
         }
@@ -97,7 +97,7 @@ impl<N: Network> Outbound<N> {
                         self.server.member_list.with_initial_members(|member| {
                             ping(
                                 &self.server,
-                                &self.socket,
+                                &self.swim_channel,
                                 &member,
                                 member.swim_socket_address(),
                                 None,
@@ -175,7 +175,7 @@ impl<N: Network> Outbound<N> {
         trace_it!(PROBE: &self.server, TraceKind::ProbeBegin, member.get_id(), addr);
 
         // Ping the member, and wait for the ack.
-        ping(&self.server, &self.socket, &member, addr, None);
+        ping(&self.server, &self.swim_channel, &member, addr, None);
         if self.recv_ack(&member, addr, AckFrom::Ping) {
             trace_it!(PROBE: &self.server, TraceKind::ProbeAckReceived, member.get_id(), addr);
             trace_it!(PROBE: &self.server, TraceKind::ProbeComplete, member.get_id(), addr);
@@ -190,7 +190,7 @@ impl<N: Network> Outbound<N> {
                           TraceKind::ProbePingReq,
                           pingreq_target.get_id(),
                           pingreq_target.get_address());
-                pingreq(&self.server, &self.socket, &pingreq_target, &member);
+                pingreq(&self.server, &self.swim_channel, &pingreq_target, &member);
             },
         );
         if !self.recv_ack(&member, addr, AckFrom::PingReq) {
@@ -303,7 +303,7 @@ pub fn populate_membership_rumors<N: Network>(
 /// Send a PingReq.
 pub fn pingreq<N: Network>(
     server: &Server<N>,
-    socket: &N::SwimChannel,
+    swim_channel: &N::SwimChannel,
     pingreq_target: &Member,
     target: &Member,
 ) {
@@ -332,7 +332,7 @@ pub fn pingreq<N: Network>(
             return;
         }
     };
-    match socket.send(&payload, addr) {
+    match swim_channel.send(&payload, addr) {
         Ok(_s) => {
             trace!(
                 "Sent PingReq to {}@{} for {}@{}",
@@ -365,7 +365,7 @@ pub fn pingreq<N: Network>(
 /// Send a Ping.
 pub fn ping<N: Network>(
     server: &Server<N>,
-    socket: &N::SwimChannel,
+    swim_channel: &N::SwimChannel,
     target: &Member,
     addr: SocketAddr,
     mut forward_to: Option<Member>,
@@ -399,7 +399,7 @@ pub fn ping<N: Network>(
         }
     };
 
-    match socket.send(&payload, addr) {
+    match swim_channel.send(&payload, addr) {
         Ok(_s) => {
             if forward_to.is_some() {
                 trace!(
@@ -426,7 +426,7 @@ pub fn ping<N: Network>(
 /// Forward an ack on.
 pub fn forward_ack<N: Network>(
     server: &Server<N>,
-    socket: &N::SwimChannel,
+    swim_channel: &N::SwimChannel,
     addr: SocketAddr,
     swim: Swim,
 ) {
@@ -453,7 +453,7 @@ pub fn forward_ack<N: Network>(
         }
     };
 
-    match socket.send(&payload, addr) {
+    match swim_channel.send(&payload, addr) {
         Ok(_s) => {
             trace!(
                 "Forwarded ack to {}@{}",
@@ -475,7 +475,7 @@ pub fn forward_ack<N: Network>(
 /// Send an Ack.
 pub fn ack<N: Network>(
     server: &Server<N>,
-    socket: &N::SwimChannel,
+    swim_channel: &N::SwimChannel,
     target: &Member,
     addr: SocketAddr,
     mut forward_to: Option<Member>,
@@ -509,7 +509,7 @@ pub fn ack<N: Network>(
         }
     };
 
-    match socket.send(&payload, addr) {
+    match swim_channel.send(&payload, addr) {
         Ok(_s) => {
             trace!(
                 "Sent ack to {}@{}",

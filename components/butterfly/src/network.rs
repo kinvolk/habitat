@@ -98,7 +98,9 @@ pub struct SwimUdpSocket {
 impl TryClone for SwimUdpSocket {
     fn try_clone(&self) -> Result<Self> {
         Ok(Self {
-            udp: self.udp.try_clone().map_err(|_| Error::SocketCloneError)?,
+            udp: self.udp.try_clone().map_err(
+                |_| Error::SwimChannelCloneError,
+            )?,
         })
     }
 }
