@@ -33,6 +33,9 @@ pub enum Error {
     BadMessage(String),
     CannotBind(io::Error),
     DatFileIO(PathBuf, io::Error),
+    GossipChannelSetupError(String),
+    GossipReceiverReceiveError(String),
+    GossipSenderSendError(String),
     HabitatCore(habitat_core::error::Error),
     NonExistentRumor(String, String),
     ProtobufError(protobuf::ProtobufError),
@@ -41,6 +44,9 @@ pub enum Error {
     SocketSetReadTimeout(io::Error),
     SocketSetWriteTimeout(io::Error),
     SocketCloneError,
+    SwimChannelSetupError(String),
+    SwimReceiveError(io::Error),
+    SwimSendError(io::Error),
     ZmqConnectError(zmq::Error),
     ZmqSendError(zmq::Error),
 }
@@ -71,6 +77,15 @@ impl fmt::Display for Error {
                     err
                 )
             }
+            Error::GossipChannelSetupError(ref err) => {
+                format!("Error setting up gossip channel: {}", err)
+            }
+            Error::GossipReceiverReceiveError(ref err) => {
+                format!("Failed to receive data with gossip receiver: {}", err)
+            }
+            Error::GossipSenderSendError(ref err) => {
+                format!("Failed to send data with gossip sender: {}", err)
+            }
             Error::HabitatCore(ref err) => format!("{}", err),
             Error::NonExistentRumor(ref member_id, ref rumor_id) => {
                 format!(
@@ -93,6 +108,15 @@ impl fmt::Display for Error {
                 format!("Cannot set UDP socket write timeout: {}", err)
             }
             Error::SocketCloneError => format!("Cannot clone the underlying UDP socket"),
+            Error::SwimChannelSetupError(ref err) => {
+                format!("Error setting up SWIM channel: {}", err)
+            }
+            Error::SwimReceiveError(ref err) => {
+                format!("Failed to receive data from SWIM channel: {}", err)
+            }
+            Error::SwimSendError(ref err) => {
+                format!("Failed to send data to SWIM channel: {}", err)
+            }
             Error::ZmqConnectError(ref err) => format!("Cannot connect ZMQ socket: {}", err),
             Error::ZmqSendError(ref err) => {
                 format!("Cannot send message through ZMQ socket: {}", err)
@@ -111,6 +135,9 @@ impl error::Error for Error {
             Error::BadMessage(_) => "Bad Protobuf Message; should be Ping/Ack/PingReq",
             Error::CannotBind(_) => "Cannot bind to port",
             Error::DatFileIO(_, _) => "Error reading or writing to DatFile",
+            Error::GossipChannelSetupError(_) => "Error setting up gossip channel",
+            Error::GossipReceiverReceiveError(_) => "Failed to receive data with gossip receiver",
+            Error::GossipSenderSendError(_) => "Failed to send data with gossip sender",
             Error::HabitatCore(_) => "Habitat core error",
             Error::NonExistentRumor(_, _) => {
                 "Cannot write rumor to bytes because it does not exist"
@@ -121,6 +148,9 @@ impl error::Error for Error {
             Error::SocketSetReadTimeout(_) => "Cannot set UDP socket read timeout",
             Error::SocketSetWriteTimeout(_) => "Cannot set UDP socket write timeout",
             Error::SocketCloneError => "Cannot clone the underlying UDP socket",
+            Error::SwimChannelSetupError(_) => "Error setting up SWIM channel",
+            Error::SwimReceiveError(_) => "Failed to receive data from SWIM channel",
+            Error::SwimSendError(_) => "Failed to send data to SWIM channel",
             Error::ZmqConnectError(_) => "Cannot connect ZMQ socket",
             Error::ZmqSendError(_) => "Cannot send message through ZMQ socket",
         }
