@@ -65,6 +65,7 @@ pub mod client;
 pub mod error;
 pub mod member;
 pub mod message;
+pub mod network;
 pub mod rumor;
 pub mod server;
 
