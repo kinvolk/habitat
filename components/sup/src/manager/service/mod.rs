@@ -328,7 +328,8 @@ impl Service {
                     ElectionStatus::ElectionNoQuorum => {
                         if self.last_election_status != census_group.election_status {
                             outputln!(preamble self.service_group,
-                                      "Waiting to execute hooks; election in progress, and we have no quorum.");
+                                      "Waiting to execute hooks; election in progress, \
+                                      and we have no quorum.");
 
                             self.last_election_status = census_group.election_status
                         }
@@ -825,6 +826,7 @@ impl fmt::Display for Service {
     }
 }
 
+/// The relationship of a service with peers in the same service group.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Topology {
     Standalone,
@@ -962,10 +964,11 @@ mod test {
 
     #[test]
     fn topology_from_str() {
-        let topology_str = "leader";
-        let topology = Topology::from_str(topology_str).unwrap();
-
-        assert_eq!(topology, Topology::Leader);
+        assert_eq!(Topology::from_str("leader").unwrap(), Topology::Leader);
+        assert_eq!(
+            Topology::from_str("standalone").unwrap(),
+            Topology::Standalone
+        );
     }
 
     #[test]
@@ -986,9 +989,8 @@ mod test {
 
     #[test]
     fn topology_to_string() {
-        let topology = Topology::Standalone;
-
-        assert_eq!("standalone", topology.to_string())
+        assert_eq!("standalone", Topology::Standalone.to_string());
+        assert_eq!("leader", Topology::Leader.to_string());
     }
 
     #[test]
