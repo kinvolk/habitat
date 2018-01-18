@@ -80,9 +80,20 @@ impl Manifest {
             PackageIdent::from_str(pkg_ident_str)?
         };
 
+        let tag = match pkg_ident.version {
+            Some(v) => {
+                match pkg_ident.release {
+                    Some(r) => format!("{}-{}", v, r),
+                    None => v,
+                }
+            }
+            None => "latest".to_owned(),
+        };
+
+        let name = format!("{}-{}", pkg_ident.name, tag);
         let image = match matches.value_of("IMAGE_NAME") {
             Some(i) => i.to_string(),
-            None => pkg_ident.origin + "/" + &pkg_ident.name + ":latest",
+            None => pkg_ident.origin + "/" + &pkg_ident.name + ":" + &tag,
         };
 
         let binds = bind::parse_bind_args(&matches)?;
@@ -98,7 +109,7 @@ impl Manifest {
         };
 
         Ok(Manifest {
-            metadata_name: pkg_ident.name,
+            metadata_name: name,
             image: image,
             count: count,
             service_topology: topology,
@@ -126,7 +137,7 @@ mod tests {
     #[test]
     fn test_manifest_generation() {
         let mut m = Manifest {
-            metadata_name: "nginx".to_owned(),
+            metadata_name: "nginx-latest".to_owned(),
             image: "core/nginx:latest".to_owned(),
             count: 3,
             service_topology: Default::default(),
@@ -149,7 +160,7 @@ mod tests {
     #[test]
     fn test_manifest_generation_binds() {
         let mut m = Manifest {
-            metadata_name: "nginx".to_owned(),
+            metadata_name: "nginx-latest".to_owned(),
             image: "core/nginx:latest".to_owned(),
             count: 3,
             service_topology: Default::default(),
