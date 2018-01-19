@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use failure::SyncFailure;
 use handlebars::Handlebars;
 use serde_json::Value;
-
-use export_docker::Result;
 
 use manifest::Manifest;
 
@@ -24,21 +21,32 @@ use manifest::Manifest;
 const MANIFESTFILE: &'static str = include_str!("../defaults/KubernetesManifest.hbs");
 const BINDFILE: &'static str = include_str!("../defaults/KubernetesBind.hbs");
 
+/// Represents the [`Manifest`] in JSON format. This is an intermediate type that can be converted
+/// to the final manifest YAML file content, ready for consumption by a Kubernetes cluster.
+///
+/// The reason for the existence of this intermediate type is to allow users of this crate to be
+/// able to modify the JSON before converting it to the final manifest string.
+///
+/// [`Manifest`]: ../manifest/struct.Manifest.html
 pub struct ManifestJson {
+    /// JSON object, holding values for the main body of the YAML content.
     pub main: Value,
+    /// JSON representations of [`Bind`] instances.
+    ///
+    /// [`Bind`]: ../bind/struct.Bind.html
     pub binds: Vec<Value>,
 }
 
 impl ManifestJson {
+    /// Create a `ManifestJson` from `manifest`.
     pub fn new(manifest: &Manifest) -> Self {
         let main = json!({
             "metadata_name": manifest.metadata_name,
-            "habitat_name": manifest.habitat_name,
             "image": manifest.image,
             "count": manifest.count,
             "service_topology": manifest.service_topology.to_string(),
             "service_group": manifest.service_group,
-            "config_secret_name": manifest.config_secret_name,
+            "config": manifest.config,
             "ring_secret_name": manifest.ring_secret_name,
             "bind": !manifest.binds.is_empty()
         });
@@ -59,22 +67,29 @@ impl ManifestJson {
             binds: binds,
         }
     }
+}
 
-    // TODO: Implement TryInto trait instead when it's in stable std crate
-    pub fn into_string(&self) -> Result<String> {
+impl Into<String> for ManifestJson {
+    /// Convert into a string. The returned string is the final manifest YAML file content, ready
+    /// for consumption by a Kubernetes cluster.
+    fn into(self) -> String {
+        // The Result::expect() usage in this function is justied by the fact that errors can only
+        // come from crate programmer (e.g messed-up the manifest template or don't check the user
+        // input).
+
         let r = Handlebars::new()
             .template_render(MANIFESTFILE, &self.main)
-            .map_err(SyncFailure::new)?;
+            .expect("Rendering of manifest from template failed");
         let mut s = r.lines().filter(|l| *l != "").collect::<Vec<_>>().join(
             "\n",
         ) + "\n";
 
         for bind in &self.binds {
-            s += &Handlebars::new().template_render(BINDFILE, &bind).map_err(
-                SyncFailure::new,
-            )?;
+            s += &Handlebars::new().template_render(BINDFILE, &bind).expect(
+                "Rendering of manifest from template failed",
+            );
         }
 
-        Ok(s)
+        s
     }
 }

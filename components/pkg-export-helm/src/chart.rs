@@ -26,7 +26,6 @@ use values::Values;
 
 pub struct Chart<'a> {
     name: String,
-    habitat_name: String,
     chartfile: ChartFile,
     manifest_template: ManifestJson,
     values: Values,
@@ -41,7 +40,7 @@ impl<'a> Chart<'a> {
         let manifest = Manifest::new_from_cli_matches(ui, &matches)?;
         let name = matches
             .value_of("CHART")
-            .unwrap_or(&manifest.habitat_name)
+            .unwrap_or(&manifest.metadata_name)
             .to_string();
         let version = matches.value_of("VERSION");
         let description = matches.value_of("DESCRIPTION");
@@ -58,14 +57,13 @@ impl<'a> Chart<'a> {
     ) -> Self {
         let main = json!({
             "metadata_name": "{{.Values.metadataName}}",
-            "habitat_name": "{{.Values.habitatName}}",
             "image": "{{.Values.imageName}}",
             "count": "{{.Values.instanceCount}}",
             "service_topology": "{{.Values.serviceTopology}}",
             "service_group": manifest.service_group.clone().map(|_| "{{.Values.serviceGroup}}"),
-            "config_secret_name": manifest.config_secret_name
+            "config": manifest.config
                 .clone()
-                .map(|_| "{{.Values.configSecretName}}"),
+                .map(|_| "{{.Values.config}}"),
             "ring_secret_name": manifest.ring_secret_name
                 .clone()
                 .map(|_| "{{.Values.ringSecretName}}"),
@@ -74,15 +72,14 @@ impl<'a> Chart<'a> {
 
         let mut values = Values::new();
         values.add_entry("metadataName", &manifest.metadata_name);
-        values.add_entry("habitatName", &manifest.habitat_name);
         values.add_entry("imageName", &manifest.image);
         values.add_entry("instanceCount", &manifest.count.to_string());
         values.add_entry("serviceTopology", &manifest.service_topology.to_string());
         if let Some(ref group) = manifest.service_group {
             values.add_entry("serviceGroup", group);
         }
-        if let Some(ref name) = manifest.config_secret_name {
-            values.add_entry("configSecretName", name);
+        if let Some(ref config) = manifest.config {
+            values.add_entry("config", config);
         }
         if let Some(ref name) = manifest.ring_secret_name {
             values.add_entry("ringSecretName", name);
@@ -113,11 +110,9 @@ impl<'a> Chart<'a> {
             main: main,
             binds: binds,
         };
-        let habitat_name = manifest.habitat_name;
 
         Chart {
             name,
-            habitat_name,
             chartfile,
             manifest_template,
             values,
@@ -125,7 +120,7 @@ impl<'a> Chart<'a> {
         }
     }
 
-    pub fn generate(&mut self) -> Result<()> {
+    pub fn generate(mut self) -> Result<()> {
         self.ui.status(
             Status::Creating,
             format!("chart directory `{}`", self.name),
@@ -139,10 +134,11 @@ impl<'a> Chart<'a> {
             Status::Creating,
             format!("templates directory `{}`", template_path),
         )?;
-        fs::create_dir_all(&template_path)?;
-        self.generate_manifest_template(&template_path)?;
 
-        self.generate_values()
+        self.generate_values()?;
+
+        fs::create_dir_all(&template_path)?;
+        self.generate_manifest_template(&template_path)
     }
 
     pub fn generate_chartfile(&mut self) -> Result<()> {
@@ -159,14 +155,14 @@ impl<'a> Chart<'a> {
         Ok(())
     }
 
-    pub fn generate_manifest_template(&mut self, template_path: &str) -> Result<()> {
-        let manifest_path = format!("{}/{}.yaml", template_path, self.habitat_name);
+    pub fn generate_manifest_template(self, template_path: &str) -> Result<()> {
+        let manifest_path = format!("{}/{}.yaml", template_path, self.name);
         self.ui.status(
             Status::Creating,
             format!("manifest template `{}`", manifest_path),
         )?;
         let mut write = fs::File::create(manifest_path)?;
-        let out = self.manifest_template.into_string()?;
+        let out: String = self.manifest_template.into();
 
         write.write(out.as_bytes())?;
 
