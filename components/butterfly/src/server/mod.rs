@@ -30,12 +30,11 @@ use std::collections::HashSet;
 use std::ffi;
 use std::fmt::{self, Debug};
 use std::fs;
-use std::io;
-use std::net::{ToSocketAddrs, UdpSocket, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::result;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::channel;
 use std::time::{Instant, Duration};
@@ -59,13 +58,15 @@ use rumor::service_file::ServiceFile;
 use rumor::election::{Election, ElectionUpdate};
 use trace::{Trace, TraceKind};
 
+use network::{Network, TryClone};
+
 pub trait Suitability: Debug + Send + Sync {
     fn get(&self, service_group: &ServiceGroup) -> u64;
 }
 
 /// The server struct. Is thread-safe.
 #[derive(Debug)]
-pub struct Server {
+pub struct Server<N: Network> {
     name: Arc<String>,
     member_id: Arc<String>,
     pub member: Arc<RwLock<Member>>,
@@ -78,13 +79,12 @@ pub struct Server {
     pub election_store: RumorStore<Election>,
     pub update_store: RumorStore<ElectionUpdate>,
     pub departure_store: RumorStore<Departure>,
-    swim_addr: Arc<RwLock<SocketAddr>>,
-    gossip_addr: Arc<RwLock<SocketAddr>>,
     suitability_lookup: Arc<Box<Suitability>>,
     data_path: Arc<Option<PathBuf>>,
     dat_file: Arc<RwLock<Option<DatFile>>>,
-    socket: Option<UdpSocket>,
+    swim_channel: Option<N::SwimChannel>,
     departed: Arc<AtomicBool>,
+    pub network: Arc<RwLock<N>>,
     // These are all here for testing support
     pause: Arc<AtomicBool>,
     pub trace: Arc<RwLock<Trace>>,
@@ -93,9 +93,9 @@ pub struct Server {
     blacklist: Arc<RwLock<HashSet<String>>>,
 }
 
-impl Clone for Server {
-    fn clone(&self) -> Server {
-        Server {
+impl<N: Network> Clone for Server<N> {
+    fn clone(&self) -> Self {
+        Self {
             name: self.name.clone(),
             member_id: self.member_id.clone(),
             member: self.member.clone(),
@@ -108,81 +108,62 @@ impl Clone for Server {
             election_store: self.election_store.clone(),
             update_store: self.update_store.clone(),
             departure_store: self.departure_store.clone(),
-            swim_addr: self.swim_addr.clone(),
-            gossip_addr: self.gossip_addr.clone(),
             suitability_lookup: self.suitability_lookup.clone(),
             data_path: self.data_path.clone(),
             dat_file: self.dat_file.clone(),
             departed: self.departed.clone(),
+            network: self.network.clone(),
             pause: self.pause.clone(),
             trace: self.trace.clone(),
             swim_rounds: self.swim_rounds.clone(),
             gossip_rounds: self.gossip_rounds.clone(),
             blacklist: self.blacklist.clone(),
-            socket: None,
+            swim_channel: None,
         }
     }
 }
 
-impl Server {
+impl<N: Network> Server<N> {
     /// Create a new server, bound to the `addr`, hosting a particular `member`, and with a
     /// `Trace` struct, a ring_key if you want encryption on the wire, and an optional server name.
-    pub fn new<T, U, P>(
-        swim_addr: T,
-        gossip_addr: U,
+    pub fn new<P>(
+        network: N,
         mut member: Member,
         trace: Trace,
         ring_key: Option<SymKey>,
         name: Option<String>,
         data_path: Option<P>,
         suitability_lookup: Box<Suitability>,
-    ) -> Result<Server>
+    ) -> Self
     where
-        T: ToSocketAddrs,
-        U: ToSocketAddrs,
         P: Into<PathBuf> + AsRef<ffi::OsStr>,
     {
-        let maybe_swim_socket_addr = swim_addr.to_socket_addrs().map(|mut iter| iter.next());
-        let maybe_gossip_socket_addr = gossip_addr.to_socket_addrs().map(|mut iter| iter.next());
-
-        match (maybe_swim_socket_addr, maybe_gossip_socket_addr) {
-            (Ok(Some(swim_socket_addr)), Ok(Some(gossip_socket_addr))) => {
-                member.set_swim_port(swim_socket_addr.port() as i32);
-                member.set_gossip_port(gossip_socket_addr.port() as i32);
-                Ok(Server {
-                    name: Arc::new(name.unwrap_or(String::from(member.get_id()))),
-                    member_id: Arc::new(String::from(member.get_id())),
-                    member: Arc::new(RwLock::new(member)),
-                    member_list: MemberList::new(),
-                    ring_key: Arc::new(ring_key),
-                    rumor_heat: RumorHeat::default(),
-                    service_store: RumorStore::default(),
-                    service_config_store: RumorStore::default(),
-                    service_file_store: RumorStore::default(),
-                    election_store: RumorStore::default(),
-                    update_store: RumorStore::default(),
-                    departure_store: RumorStore::default(),
-                    swim_addr: Arc::new(RwLock::new(swim_socket_addr)),
-                    gossip_addr: Arc::new(RwLock::new(gossip_socket_addr)),
-                    suitability_lookup: Arc::new(suitability_lookup),
-                    data_path: Arc::new(data_path.as_ref().map(|p| p.into())),
-                    dat_file: Arc::new(RwLock::new(None)),
-                    departed: Arc::new(AtomicBool::new(false)),
-                    pause: Arc::new(AtomicBool::new(false)),
-                    trace: Arc::new(RwLock::new(trace)),
-                    swim_rounds: Arc::new(AtomicIsize::new(0)),
-                    gossip_rounds: Arc::new(AtomicIsize::new(0)),
-                    blacklist: Arc::new(RwLock::new(HashSet::new())),
-                    socket: None,
-                })
-            }
-            (Err(e), _) | (_, Err(e)) => Err(Error::CannotBind(e)),
-            (Ok(None), _) | (_, Ok(None)) => {
-                Err(Error::CannotBind(io::Error::new(
-                    io::ErrorKind::AddrNotAvailable,
-                    "No address discovered.",
-                )))
-            }
+        member.set_swim_port(network.get_swim_port() as i32);
+        member.set_gossip_port(network.get_gossip_port() as i32);
+        Self {
+            name: Arc::new(name.unwrap_or(String::from(member.get_id()))),
+            member_id: Arc::new(String::from(member.get_id())),
+            member: Arc::new(RwLock::new(member)),
+            member_list: MemberList::new(),
+            ring_key: Arc::new(ring_key),
+            rumor_heat: RumorHeat::default(),
+            service_store: RumorStore::default(),
+            service_config_store: RumorStore::default(),
+            service_file_store: RumorStore::default(),
+            election_store: RumorStore::default(),
+            update_store: RumorStore::default(),
+            departure_store: RumorStore::default(),
+            suitability_lookup: Arc::new(suitability_lookup),
+            data_path: Arc::new(data_path.as_ref().map(|p| p.into())),
+            dat_file: Arc::new(RwLock::new(None)),
+            departed: Arc::new(AtomicBool::new(false)),
+            network: Arc::new(RwLock::new(network)),
+            pause: Arc::new(AtomicBool::new(false)),
+            trace: Arc::new(RwLock::new(trace)),
+            swim_rounds: Arc::new(AtomicIsize::new(0)),
+            gossip_rounds: Arc::new(AtomicIsize::new(0)),
+            blacklist: Arc::new(RwLock::new(HashSet::new())),
+            swim_channel: None,
         }
     }
 
@@ -260,47 +241,35 @@ impl Server {
             *dat_file = Some(file);
         }
 
-        let socket = match UdpSocket::bind(*self.swim_addr.read().expect(
-            "Swim address lock is poisoned",
-        )) {
-            Ok(socket) => socket,
-            Err(e) => return Err(Error::CannotBind(e)),
-        };
-        socket
-            .set_read_timeout(Some(Duration::from_millis(1000)))
-            .map_err(|e| Error::SocketSetReadTimeout(e))?;
-        socket
-            .set_write_timeout(Some(Duration::from_millis(1000)))
-            .map_err(|e| Error::SocketSetReadTimeout(e))?;
-
+        let swim_channel = self.read_network().get_swim_channel()?;
         let server_a = self.clone();
-        let socket_a = match socket.try_clone() {
-            Ok(socket_a) => socket_a,
-            Err(_) => return Err(Error::SocketCloneError),
+        let swim_channel_a = match swim_channel.try_clone() {
+            Ok(swim_channel_a) => swim_channel_a,
+            Err(_) => return Err(Error::SwimChannelCloneError),
         };
-        let socket_expire = match socket.try_clone() {
-            Ok(socket_expire) => socket_expire,
-            Err(_) => return Err(Error::SocketCloneError),
+        let swim_channel_expire = match swim_channel.try_clone() {
+            Ok(swim_channel_expire) => swim_channel_expire,
+            Err(_) => return Err(Error::SwimChannelCloneError),
         };
-        self.socket = Some(socket_expire);
+        self.swim_channel = Some(swim_channel_expire);
 
         let _ = thread::Builder::new()
             .name(format!("inbound-{}", self.name()))
             .spawn(move || {
-                inbound::Inbound::new(server_a, socket_a, tx_outbound).run();
+                inbound::Inbound::new(server_a, swim_channel_a, tx_outbound).run();
                 panic!("You should never, ever get here, judy");
             });
 
         let server_b = self.clone();
-        let socket_b = match socket.try_clone() {
-            Ok(socket_b) => socket_b,
-            Err(_) => return Err(Error::SocketCloneError),
+        let swim_channel_b = match swim_channel.try_clone() {
+            Ok(swim_channel_b) => swim_channel_b,
+            Err(_) => return Err(Error::SwimChannelCloneError),
         };
         let timing_b = timing.clone();
         let _ = thread::Builder::new()
             .name(format!("outbound-{}", self.name()))
             .spawn(move || {
-                outbound::Outbound::new(server_b, socket_b, rx_inbound, timing_b).run();
+                outbound::Outbound::new(server_b, swim_channel_b, rx_inbound, timing_b).run();
                 panic!("You should never, ever get here, bob");
             });
 
@@ -389,32 +358,26 @@ impl Server {
 
     /// Return the swim address we are bound to
     fn swim_addr(&self) -> SocketAddr {
-        let sa = self.swim_addr.read().expect("Swim Address lock poisoned");
-        sa.clone()
+        self.read_network().get_swim_addr()
     }
 
     /// Return the port number of the swim socket we are bound to.
     pub fn swim_port(&self) -> u16 {
-        self.swim_addr
-            .read()
-            .expect("Swim Address lock poisoned")
-            .port()
+        self.read_network().get_swim_port()
     }
 
     /// Return the gossip address we are bound to
     pub fn gossip_addr(&self) -> SocketAddr {
-        let ga = self.gossip_addr.read().expect(
-            "Gossip Address lock poisoned",
-        );
-        ga.clone()
+        self.read_network().get_gossip_addr()
     }
 
     /// Return the port number of the gossip socket we are bound to.
     pub fn gossip_port(&self) -> u16 {
-        self.gossip_addr
-            .read()
-            .expect("Gossip Address lock poisoned")
-            .port()
+        self.read_network().get_gossip_port()
+    }
+
+    fn read_network(&self) -> RwLockReadGuard<N> {
+        self.network.read().expect("Network lock is poisoned")
     }
 
     /// Return the member ID of this server.
@@ -472,7 +435,7 @@ impl Server {
     /// Set our member to departed, then send up to 10 out of order ack messages to other
     /// members to seed our status.
     pub fn set_departed(&self) {
-        if self.socket.is_some() {
+        if self.swim_channel.is_some() {
             let member = {
                 let mut me = self.member.write().expect("Member lock is poisoned");
                 let mut incarnation = me.get_incarnation();
@@ -499,7 +462,13 @@ impl Server {
             for member in check_list.iter().take(10) {
                 let addr = member.swim_socket_address();
                 // Safe because we checked above
-                outbound::ack(&self, self.socket.as_ref().unwrap(), member, addr, None);
+                outbound::ack(
+                    &self,
+                    self.swim_channel.as_ref().unwrap(),
+                    member,
+                    addr,
+                    None,
+                );
             }
         } else {
             debug!("No socket present; server was never started, so nothing to depart");
@@ -1038,7 +1007,7 @@ impl Server {
     }
 }
 
-impl Serialize for Server {
+impl<N: Network> Serialize for Server<N> {
     fn serialize<S>(&self, serializer: S) -> result::Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1064,7 +1033,7 @@ impl Serialize for Server {
     }
 }
 
-impl fmt::Display for Server {
+impl<N: Network> fmt::Display for Server<N> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
@@ -1076,13 +1045,13 @@ impl fmt::Display for Server {
     }
 }
 
-impl Drop for Server {
+impl<N: Network> Drop for Server<N> {
     fn drop(&mut self) {
         self.persist_data();
     }
 }
 
-fn persist_loop(server: Server) {
+fn persist_loop<N: Network>(server: Server<N>) {
     loop {
         let next_check = Instant::now() + Duration::from_millis(30_000);
         server.persist_data();
@@ -1095,10 +1064,12 @@ fn persist_loop(server: Server) {
 mod tests {
     mod server {
         use habitat_core::service::ServiceGroup;
+        use network::RealNetwork;
         use server::{Server, Suitability};
         use server::timing::Timing;
         use member::Member;
         use trace::Trace;
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
@@ -1113,50 +1084,36 @@ mod tests {
             }
         }
 
-        fn start_server() -> Server {
+        fn start_server() -> Server<RealNetwork> {
             SWIM_PORT.compare_and_swap(0, 6666, Ordering::Relaxed);
             GOSSIP_PORT.compare_and_swap(0, 7777, Ordering::Relaxed);
             let swim_port = SWIM_PORT.fetch_add(1, Ordering::Relaxed);
-            let swim_listen = format!("127.0.0.1:{}", swim_port);
+            let swim_listen = localhost_addr(swim_port as u16);
             let gossip_port = GOSSIP_PORT.fetch_add(1, Ordering::Relaxed);
-            let gossip_listen = format!("127.0.0.1:{}", gossip_port);
+            let gossip_listen = localhost_addr(gossip_port as u16);
             let mut member = Member::default();
             member.set_swim_port(swim_port as i32);
             member.set_gossip_port(gossip_port as i32);
+            let network = RealNetwork::new_for_server(swim_listen, gossip_listen);
             Server::new(
-                &swim_listen[..],
-                &gossip_listen[..],
+                network,
                 member,
                 Trace::default(),
                 None,
                 None,
                 None::<PathBuf>,
                 Box::new(ZeroSuitability),
-            ).unwrap()
+            )
+        }
+
+        fn localhost_addr(port: u16) -> SocketAddr {
+            let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+            SocketAddr::new(ip, port)
         }
 
         #[test]
         fn new() {
             start_server();
-        }
-
-        #[test]
-        fn invalid_addresses_fails() {
-            let swim_listen = "";
-            let gossip_listen = "";
-            let member = Member::default();
-            assert!(
-                Server::new(
-                    &swim_listen[..],
-                    &gossip_listen[..],
-                    member,
-                    Trace::default(),
-                    None,
-                    None,
-                    None::<PathBuf>,
-                    Box::new(ZeroSuitability),
-                ).is_err()
-            )
         }
 
         #[test]

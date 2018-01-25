@@ -22,27 +22,26 @@ use std::str;
 use habitat_core;
 use protobuf;
 use toml;
-use zmq;
 
 pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
     BadDataPath(PathBuf, io::Error),
-    BadDatFile(PathBuf, io::Error),
-    BadMessage(String),
     CannotBind(io::Error),
     DatFileIO(PathBuf, io::Error),
+    GossipChannelSetupError(String),
+    GossipReceiverReceiveError(String),
+    GossipSenderSendError(String),
     HabitatCore(habitat_core::error::Error),
     NonExistentRumor(String, String),
     ProtobufError(protobuf::ProtobufError),
     ServiceConfigDecode(String, toml::de::Error),
     ServiceConfigNotUtf8(String, str::Utf8Error),
-    SocketSetReadTimeout(io::Error),
-    SocketSetWriteTimeout(io::Error),
-    SocketCloneError,
-    ZmqConnectError(zmq::Error),
-    ZmqSendError(zmq::Error),
+    SwimChannelCloneError,
+    SwimChannelSetupError(String),
+    SwimReceiveError(io::Error),
+    SwimSendError(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -55,14 +54,6 @@ impl fmt::Display for Error {
                     err
                 )
             }
-            Error::BadDatFile(ref path, ref err) => {
-                format!(
-                    "Unable to decode contents of DatFile, {}, {}",
-                    path.display(),
-                    err
-                )
-            }
-            Error::BadMessage(ref err) => format!("Bad Message: {:?}", err),
             Error::CannotBind(ref err) => format!("Cannot bind to port: {:?}", err),
             Error::DatFileIO(ref path, ref err) => {
                 format!(
@@ -70,6 +61,15 @@ impl fmt::Display for Error {
                     path.display(),
                     err
                 )
+            }
+            Error::GossipChannelSetupError(ref err) => {
+                format!("Error setting up gossip channel: {}", err)
+            }
+            Error::GossipReceiverReceiveError(ref err) => {
+                format!("Failed to receive data with gossip receiver: {}", err)
+            }
+            Error::GossipSenderSendError(ref err) => {
+                format!("Failed to send data with gossip sender: {}", err)
             }
             Error::HabitatCore(ref err) => format!("{}", err),
             Error::NonExistentRumor(ref member_id, ref rumor_id) => {
@@ -86,16 +86,15 @@ impl fmt::Display for Error {
             Error::ServiceConfigNotUtf8(ref sg, ref err) => {
                 format!("Cannot read service configuration: group={}, {}", sg, err)
             }
-            Error::SocketSetReadTimeout(ref err) => {
-                format!("Cannot set UDP socket read timeout: {}", err)
+            Error::SwimChannelCloneError => format!("Cannot clone the SWIM channel"),
+            Error::SwimChannelSetupError(ref err) => {
+                format!("Error setting up SWIM channel: {}", err)
             }
-            Error::SocketSetWriteTimeout(ref err) => {
-                format!("Cannot set UDP socket write timeout: {}", err)
+            Error::SwimReceiveError(ref err) => {
+                format!("Failed to receive data from SWIM channel: {}", err)
             }
-            Error::SocketCloneError => format!("Cannot clone the underlying UDP socket"),
-            Error::ZmqConnectError(ref err) => format!("Cannot connect ZMQ socket: {}", err),
-            Error::ZmqSendError(ref err) => {
-                format!("Cannot send message through ZMQ socket: {}", err)
+            Error::SwimSendError(ref err) => {
+                format!("Failed to send data to SWIM channel: {}", err)
             }
 
         };
@@ -107,10 +106,11 @@ impl error::Error for Error {
     fn description(&self) -> &str {
         match *self {
             Error::BadDataPath(_, _) => "Unable to read or write to data directory",
-            Error::BadDatFile(_, _) => "Unable to decode contents of DatFile",
-            Error::BadMessage(_) => "Bad Protobuf Message; should be Ping/Ack/PingReq",
             Error::CannotBind(_) => "Cannot bind to port",
             Error::DatFileIO(_, _) => "Error reading or writing to DatFile",
+            Error::GossipChannelSetupError(_) => "Error setting up gossip channel",
+            Error::GossipReceiverReceiveError(_) => "Failed to receive data with gossip receiver",
+            Error::GossipSenderSendError(_) => "Failed to send data with gossip sender",
             Error::HabitatCore(_) => "Habitat core error",
             Error::NonExistentRumor(_, _) => {
                 "Cannot write rumor to bytes because it does not exist"
@@ -118,11 +118,10 @@ impl error::Error for Error {
             Error::ProtobufError(ref err) => err.description(),
             Error::ServiceConfigDecode(_, _) => "Cannot decode service config into TOML",
             Error::ServiceConfigNotUtf8(_, _) => "Cannot read service config bytes to UTF-8",
-            Error::SocketSetReadTimeout(_) => "Cannot set UDP socket read timeout",
-            Error::SocketSetWriteTimeout(_) => "Cannot set UDP socket write timeout",
-            Error::SocketCloneError => "Cannot clone the underlying UDP socket",
-            Error::ZmqConnectError(_) => "Cannot connect ZMQ socket",
-            Error::ZmqSendError(_) => "Cannot send message through ZMQ socket",
+            Error::SwimChannelCloneError => "Cannot clone the SWIM channel",
+            Error::SwimChannelSetupError(_) => "Error setting up SWIM channel",
+            Error::SwimReceiveError(_) => "Failed to receive data from SWIM channel",
+            Error::SwimSendError(_) => "Failed to send data to SWIM channel",
         }
     }
 }
