@@ -9,11 +9,12 @@ use std::path::PathBuf;
 use std::result::Result as StdResult;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::mpsc::{self, Receiver, Sender, SendError};
+use std::time::Duration;
 use std::thread;
 
 use habitat_core::service::ServiceGroup;
 use habitat_butterfly::error::{Error, Result};
-use habitat_butterfly::member::Member;
+use habitat_butterfly::member::{Health, Member};
 use habitat_butterfly::network::{GossipReceiver, GossipSender, Network, SwimReceiver, SwimSender};
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::server::timing::Timing;
@@ -391,6 +392,24 @@ impl TestNetworkSwitchBoard {
         ExposedTestServer::new(exposed_addr)
     }
 
+    pub fn wait_for_health_all(&self, health: Health) -> bool {
+        let server_count = self.read_servers().len();
+        for l in 0..server_count {
+            for r in 0..server_count {
+                if l == r {
+                    continue;
+                }
+                if !self.wait_for_health_of(l, r, health) {
+                    return false;
+                }
+                if !self.wait_for_health_of(r, l, health) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     fn create_test_network(&self, addr: SocketAddr) -> TestNetwork {
         let (swim_in, swim_out) = self.start_routing_thread(addr, ChannelType::SWIM);
         let (gossip_in, gossip_out) = self.start_routing_thread(addr, ChannelType::Gossip);
@@ -416,6 +435,55 @@ impl TestNetworkSwitchBoard {
         let timing = Timing::default();
         butterfly.start(timing).expect("failed to start server");
         TestServer { butterfly }
+    }
+
+    fn wait_for_health_of(&self, from_idx: usize, to_idx: usize, health: Health) -> bool {
+        let rounds_in = self.gossip_rounds_in(4);
+        loop {
+            if let Some(member_health) = self.health_of(from_idx, to_idx) {
+                if member_health == health {
+                    return true;
+                }
+            }
+            if self.reached_max_rounds(&rounds_in) {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    pub fn reached_max_rounds(&self, rounds_in: &Vec<isize>) -> bool {
+        let servers = self.read_servers();
+        for (idx, round) in rounds_in.into_iter().enumerate() {
+            let server = &servers[idx];
+            if server.butterfly.paused() || server.butterfly.swim_rounds() > *round {
+                continue;
+            }
+            return false;
+        }
+        true
+    }
+
+    fn health_of(&self, from_idx: usize, to_idx: usize) -> Option<Health> {
+        let servers = self.read_servers();
+        let to_member = servers[to_idx].butterfly.member.read().expect(
+            "Member lock is poisoned",
+        );
+        servers[from_idx].butterfly.member_list.health_of(
+            &to_member,
+        )
+    }
+
+    fn gossip_rounds(&self) -> Vec<isize> {
+        let servers = self.read_servers();
+        servers
+            .iter()
+            .map(|s| s.butterfly.gossip_rounds())
+            .collect()
+    }
+
+    fn gossip_rounds_in(&self, count: isize) -> Vec<isize> {
+        self.gossip_rounds().iter().map(|r| r + count).collect()
     }
 
     fn start_routing_thread(
@@ -490,6 +558,10 @@ impl TestNetworkSwitchBoard {
 
     fn write_forwards(&self) -> RwLockWriteGuard<ForwardsMap> {
         self.forwards.write().expect("Forwards lock is poisoned")
+    }
+
+    fn read_servers(&self) -> RwLockReadGuard<Vec<TestServer>> {
+        self.servers.read().expect("Servers lock is poisoned")
     }
 
     fn write_servers(&self) -> RwLockWriteGuard<Vec<TestServer>> {
