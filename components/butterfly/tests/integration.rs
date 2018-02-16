@@ -22,6 +22,7 @@ extern crate habitat_core;
 
 mod rumor;
 mod encryption;
+mod nat;
 
 use habitat_butterfly::member::Health;
 
