@@ -1,13 +1,95 @@
 extern crate habitat_butterfly;
 
 use std::cmp;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::hash_map::Entry;
+use std::fmt::{Display, Result as FmtResult, Formatter};
 use std::net::SocketAddr;
 use std::result::Result as StdResult;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 use std::sync::mpsc::{Receiver, Sender, SendError};
 
 use habitat_butterfly::error::{Error, Result};
 use habitat_butterfly::network::{GossipReceiver, GossipSender, Network, SwimReceiver, SwimSender};
+
+// ZoneID is a number that identifies a zone. Within a zone all the
+// supervisors can talk to each other. For the interzone
+// communication, a parent-child relationship needs to be established
+// first, then supervisors in the child zone can talk to supervisors
+// in the parent zone, but not the other way around.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+struct ZoneID(u8);
+
+impl ZoneID {
+    pub fn new(raw_id: u8) -> Self {
+        assert!(raw_id > 0, "zone IDs must be greater than zero");
+        ZoneID(raw_id)
+    }
+
+    pub fn raw(&self) -> u8 {
+        self.0
+    }
+}
+
+impl Display for ZoneID {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.raw())
+    }
+}
+
+// ZoneInfo stores the relationship information of a zone.
+#[derive(Debug, Default)]
+struct ZoneInfo {
+    parent: Option<ZoneID>,
+    children: HashSet<ZoneID>,
+}
+
+struct ZoneMap(HashMap<ZoneID, Mutex<ZoneInfo>>);
+
+impl ZoneMap {
+    pub fn setup_zone_relationship(&mut self, parent_id: ZoneID, child_id: ZoneID) {
+        assert_ne!(parent_id, child_id);
+        self.ensure_zone(parent_id);
+        self.ensure_zone(child_id);
+        assert!(!self.is_zone_child_of_mut(parent_id, child_id));
+        {
+            let parent_zone = self.get_zone_mut(parent_id);
+            parent_zone.children.insert(child_id);
+        }
+        {
+            let child_zone = self.get_zone_mut(child_id);
+            assert!(child_zone.parent.is_none());
+            child_zone.parent = Some(parent_id);
+        }
+    }
+
+    pub fn is_zone_child_of_mut(&mut self, child_id: ZoneID, parent_id: ZoneID) -> bool {
+        let mut queue = VecDeque::new();
+        queue.push_back(parent_id);
+        while let Some(id) = queue.pop_front() {
+            let zone = self.get_zone_mut(id);
+            if zone.children.contains(&child_id) {
+                return true;
+            }
+            queue.extend(zone.children.iter());
+        }
+        false
+    }
+
+    fn ensure_zone(&mut self, zone_id: ZoneID) {
+        if let Entry::Vacant(v) = self.0.entry(zone_id) {
+            v.insert(Mutex::new(ZoneInfo::default()));
+        }
+    }
+
+    fn get_zone_mut(&mut self, zone_id: ZoneID) -> &mut ZoneInfo {
+        self.0
+            .get_mut(&zone_id)
+            .expect(&format!("Zone {} not in zone map", zone_id))
+            .get_mut()
+            .expect(&format!("Zone {} lock is poisoned", zone_id))
+    }
+}
 
 // TestMessage is a wrapper around the SWIM or gossip message sent by
 // a butterfly server. Contains source and destination addresses used
@@ -47,11 +129,22 @@ impl<T> LockedSender<T> {
 // TestNetworkSwitchBoard implements the multizone setup for testing
 // the spanning ring.
 #[derive(Clone)]
-struct TestNetworkSwitchBoard {}
+struct TestNetworkSwitchBoard {
+    zones: Arc<RwLock<ZoneMap>>,
+}
 
 impl TestNetworkSwitchBoard {
     pub fn new() -> Self {
-        Self {}
+        Self { zones: Arc::new(RwLock::new(ZoneMap(HashMap::new()))) }
+    }
+
+    pub fn setup_zone_relationship(&self, parent_id: ZoneID, child_id: ZoneID) {
+        let mut zones = self.write_zones();
+        zones.setup_zone_relationship(parent_id, child_id);
+    }
+
+    fn write_zones(&self) -> RwLockWriteGuard<ZoneMap> {
+        self.zones.write().expect("Zone map lock is poisoned")
     }
 }
 
