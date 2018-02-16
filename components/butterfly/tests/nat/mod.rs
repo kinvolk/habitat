@@ -165,29 +165,75 @@ impl TalkTarget for TestServer {
     }
 }
 
+// ExposedTestServer is a way for the supervisor in parent zone to be
+// able to talk to the supervisor in child zone. The supervisor in
+// child zone can be exposed to the parent zone, so the supervisor in
+// parent zones can communicate with it.
+struct ExposedTestServer {
+    addr: SocketAddr,
+}
+
+impl ExposedTestServer {
+    pub fn new(addr: SocketAddr) -> Self {
+        Self { addr }
+    }
+}
+
+impl TalkTarget for ExposedTestServer {
+    fn create_member_info(&self) -> Member {
+        create_member_from_addr(self.addr)
+    }
+}
+
 type ZoneToCountMap = HashMap<ZoneID, u8>;
 
-// Addresses is used to generate addresses for TestServers. The
-// generated IP4 addresses have a certain structure:
+// Addresses is used to generate addresses for TestServers and
+// ExposedTestServers. The generated IP4 addresses have a certain
+// structure:
 //
-// <A>.<B>.0.0:42
+// <A>.<B>.0.0:<PORT>
 // A - zone ID this IP is relevant for, >0
-// B - server index in the zone
+// B - server index in the zone, 0 if it is an exposed server
+// PORT - 42 for servers, (zone ID << 8) | (exposed server idx) for
+//        exposed servers
 //
-// So a fifth server in a first zone will have an IP 1.5.0.0:42.
+// So a fifth server in a first zone will have an IP 1.5.0.0:42. And
+// if it is a third exposed server in a second zone, its exposed
+// address will be 2.0.0.0:259. 259 is (1 << 8) + 3, where 1 is a zone
+// ID of the server.
+//
+// FIXME(krnowak): Not sure if I really need this (zone ID << 8) in
+// port number, maybe will come handy at some point…
 struct Addresses {
     server_map: ZoneToCountMap,
+    exposed_map: ZoneToCountMap,
 }
 
 impl Addresses {
     pub fn new() -> Self {
-        Self { server_map: HashMap::new() }
+        Self {
+            server_map: HashMap::new(),
+            exposed_map: HashMap::new(),
+        }
     }
 
     pub fn generate_address_for_server(&mut self, zone_id: ZoneID) -> SocketAddr {
         let idx = Self::get_next_idx_for_zone(&mut self.server_map, zone_id);
         let port = 42 as u16;
         Self::generate_address(zone_id.raw(), idx, port)
+    }
+
+    pub fn generate_address_for_exposed_server(
+        &mut self,
+        server: &TestServer,
+        exposed_zone_id: ZoneID,
+    ) -> SocketAddr {
+        let idx = Self::get_next_idx_for_zone(&mut self.exposed_map, exposed_zone_id) as u16;
+        let server_zone_id_raw = Self::get_zone_from_address(
+            &server.butterfly.read_network().get_swim_addr(),
+        ).raw() as u16;
+        let port = (server_zone_id_raw << 8) | idx;
+        Self::generate_address(exposed_zone_id.raw(), 0, port)
     }
 
     pub fn get_zone_from_address(addr: &SocketAddr) -> ZoneID {
@@ -262,12 +308,17 @@ enum ChannelType {
     Gossip,
 }
 
+// ForwardsMap is a mapping from one IP address to another. Used in
+// exposing the server from child zone in the parent zone.
+type ForwardsMap = HashMap<SocketAddr, SocketAddr>;
+
 // TestNetworkSwitchBoard implements the multizone setup for testing
 // the spanning ring.
 #[derive(Clone)]
 struct TestNetworkSwitchBoard {
     zones: Arc<RwLock<ZoneMap>>,
     servers: Arc<RwLock<Vec<TestServer>>>,
+    forwards: Arc<RwLock<ForwardsMap>>,
     addresses: Arc<Mutex<Addresses>>,
     swim_channel_map: Arc<RwLock<ChannelMap>>,
     gossip_channel_map: Arc<RwLock<ChannelMap>>,
@@ -286,6 +337,7 @@ impl TestNetworkSwitchBoard {
         Self {
             zones: Arc::new(RwLock::new(ZoneMap(HashMap::new()))),
             servers: Arc::new(RwLock::new(Vec::new())),
+            forwards: Arc::new(RwLock::new(HashMap::new())),
             addresses: Arc::new(Mutex::new(Addresses::new())),
             swim_channel_map: Arc::new(RwLock::new(HashMap::new())),
             gossip_channel_map: Arc::new(RwLock::new(HashMap::new())),
@@ -308,6 +360,35 @@ impl TestNetworkSwitchBoard {
         let server = self.create_test_server(network, idx as u64);
         servers.push(server.clone());
         server
+    }
+
+    pub fn expose_server_in_zone(&self, server: &TestServer, zone_id: ZoneID) -> ExposedTestServer {
+        let server_addr = server.butterfly.read_network().get_swim_addr();
+        {
+            let zone_map = self.read_zones();
+            let server_zone_id = Addresses::get_zone_from_address(&server_addr);
+            assert!(
+                zone_map.is_zone_child_of(server_zone_id, zone_id),
+                "only servers in child zones can be exposed in parent zones"
+            );
+        }
+        let exposed_addr = {
+            let mut addresses = self.get_addresses_guard();
+            addresses.generate_address_for_exposed_server(&server, zone_id)
+        };
+        {
+            let mut forwards = self.write_forwards();
+            match forwards.entry(exposed_addr) {
+                Entry::Vacant(v) => {
+                    v.insert(server_addr);
+                }
+                Entry::Occupied(_) => {
+                    unreachable!("should not happen, the generated address should be unique")
+                }
+            }
+        }
+
+        ExposedTestServer::new(exposed_addr)
     }
 
     fn create_test_network(&self, addr: SocketAddr) -> TestNetwork {
@@ -373,15 +454,19 @@ impl TestNetworkSwitchBoard {
             }
         };
         if can_route {
-            let target_addr = msg.target_addr;
+            let real_target_addr = {
+                let forwards = self.read_forwards();
+                let addr_ref = forwards.get(&msg.target_addr).unwrap_or(&msg.target_addr);
+                *addr_ref
+            };
             let maybe_out = {
                 let map = self.read_channel_map(channel_type);
-                map.get(&target_addr).map(|l| l.cloned_sender())
+                map.get(&real_target_addr).map(|l| l.cloned_sender())
             };
             if let Some(out) = maybe_out {
                 if out.send(msg).is_err() {
                     let mut map = self.write_channel_map(channel_type);
-                    map.remove(&target_addr);
+                    map.remove(&real_target_addr);
                 }
             }
         }
@@ -397,6 +482,14 @@ impl TestNetworkSwitchBoard {
 
     fn get_addresses_guard(&self) -> MutexGuard<Addresses> {
         self.addresses.lock().expect("Addresses lock is poisoned")
+    }
+
+    fn read_forwards(&self) -> RwLockReadGuard<ForwardsMap> {
+        self.forwards.read().expect("Forwards lock is poisoned")
+    }
+
+    fn write_forwards(&self) -> RwLockWriteGuard<ForwardsMap> {
+        self.forwards.write().expect("Forwards lock is poisoned")
     }
 
     fn write_servers(&self) -> RwLockWriteGuard<Vec<TestServer>> {
