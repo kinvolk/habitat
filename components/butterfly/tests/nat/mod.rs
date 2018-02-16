@@ -1,5 +1,7 @@
 extern crate habitat_butterfly;
 
+mod nat;
+
 use std::cmp;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::collections::hash_map::Entry;
