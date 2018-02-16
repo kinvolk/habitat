@@ -20,6 +20,7 @@ extern crate habitat_core;
 extern crate time;
 
 mod encryption;
+mod nat;
 mod rumor;
 
 use habitat_butterfly::member::Health;
