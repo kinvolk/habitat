@@ -44,6 +44,17 @@ impl<T> LockedSender<T> {
     }
 }
 
+// TestNetworkSwitchBoard implements the multizone setup for testing
+// the spanning ring.
+#[derive(Clone)]
+struct TestNetworkSwitchBoard {}
+
+impl TestNetworkSwitchBoard {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
 // TestSwimSender is an implementation of a SwimSender trait based on
 // channels.
 #[derive(Debug)]
