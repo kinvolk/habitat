@@ -136,10 +136,33 @@ fn create_member_from_addr(addr: SocketAddr) -> Member {
     member
 }
 
+// TalkTarget is a trait used for types that can be talked to. It is
+// basically about establishing a ring with SWIM messages.
+trait TalkTarget {
+    fn create_member_info(&self) -> Member;
+}
+
 // TestServer is a (thin) wrapper around the butterfly server.
 #[derive(Clone)]
 struct TestServer {
     butterfly: Server<TestNetwork>,
+}
+
+impl TestServer {
+    pub fn talk_to(&self, talk_targets: Vec<&TalkTarget>) {
+        let mut members = Vec::with_capacity(talk_targets.len());
+        for talk_target in talk_targets {
+            members.push(talk_target.create_member_info());
+        }
+        self.butterfly.member_list.set_initial_members(members);
+    }
+}
+
+impl TalkTarget for TestServer {
+    fn create_member_info(&self) -> Member {
+        let addr = self.butterfly.read_network().get_swim_addr();
+        create_member_from_addr(addr)
+    }
 }
 
 type ZoneToCountMap = HashMap<ZoneID, u8>;
