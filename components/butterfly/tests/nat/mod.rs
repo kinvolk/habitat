@@ -1,5 +1,7 @@
 extern crate habitat_butterfly;
 
+mod nat;
+
 use std::cmp::{self, Ordering};
 use std::collections::hash_map::Entry;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
