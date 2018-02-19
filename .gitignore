@@ -8,7 +8,7 @@
 .tags*
 .vagrant/
 .vscode
-/target
+target/
 dump.rdb
 log/
 results/
