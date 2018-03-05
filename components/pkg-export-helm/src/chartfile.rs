@@ -19,6 +19,8 @@ use handlebars::Handlebars;
 use export_docker::Result;
 use hcore::package::PackageIdent;
 
+use maintainer::Maintainer;
+
 pub const DEFAULT_VERSION: &'static str = "0.0.1";
 
 // Helm chart file template
@@ -34,10 +36,14 @@ pub struct ChartFile {
     pub deprecated: bool,
     pub keywords: Vec<String>,
     pub sources: Vec<String>,
+    pub maintainers: Vec<Maintainer>,
 }
 
 impl ChartFile {
-    pub fn new_from_cli_matches(matches: &clap::ArgMatches, pkg_ident: &PackageIdent) -> Self {
+    pub fn new_from_cli_matches(
+        matches: &clap::ArgMatches,
+        pkg_ident: &PackageIdent,
+    ) -> Result<Self> {
         let name = matches
             .value_of("CHART")
             .unwrap_or(&pkg_ident.name)
@@ -67,8 +73,9 @@ impl ChartFile {
             .values_of("SOURCE")
             .map(|args| args.map(|k| k.to_owned()).collect())
             .unwrap_or(vec![]);
+        let maintainers = Maintainer::from_args(&matches)?;
 
-        ChartFile {
+        Ok(ChartFile {
             name,
             version,
             description,
@@ -78,11 +85,17 @@ impl ChartFile {
             deprecated,
             keywords,
             sources,
-        }
+            maintainers,
+        })
     }
 
     // TODO: Implement TryInto trait instead when it's in stable std crate
     pub fn into_string(&self) -> Result<String> {
+        let mut maintainers: Vec<String> = vec![];
+        for maintainer in self.maintainers.clone() {
+            maintainers.push(maintainer.into());
+        }
+
         let json = json!({
             "name": self.name,
             "version": self.version,
@@ -93,6 +106,7 @@ impl ChartFile {
             "deprecated": self.deprecated,
             "keywords": self.keywords,
             "sources": self.sources,
+            "maintainers": maintainers,
         });
 
         Handlebars::new()

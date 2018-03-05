@@ -25,6 +25,12 @@ sources:
   - {{this}}
 {{~ /each ~}}
 {{~ /if ~}}
+{{~ #if maintainers}}
+maintainers:
+{{~ #each maintainers}}
+{{this}}
+{{~ /each ~}}
+{{~ /if ~}}
 {{~ #if deprecated}}
 deprecated: yes
 {{~ /if ~}}
