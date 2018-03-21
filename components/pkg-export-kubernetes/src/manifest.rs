@@ -26,6 +26,7 @@ use export_docker::{Result, DockerImage};
 
 use manifestjson::ManifestJson;
 use service_bind::ServiceBind;
+use service_port::ServicePort;
 use topology::Topology;
 
 /// Represents a Kubernetes manifest.
@@ -51,6 +52,9 @@ pub struct Manifest {
 
     /// Any binds, as `ServiceBind` instances.
     pub binds: Vec<ServiceBind>,
+
+    /// Any service ports, as `ServicePortinstances.
+    pub ports: Vec<ServicePort>,
 }
 
 impl Manifest {
@@ -124,6 +128,7 @@ impl Manifest {
         };
 
         let binds = ServiceBind::from_args(&matches)?;
+        let ports = ServicePort::from_args(&matches)?;
 
         let config = match config_file {
             None => None,
@@ -145,6 +150,7 @@ impl Manifest {
             config: config,
             ring_secret_name: ring_secret_name,
             binds: binds,
+            ports: ports,
         })
     }
 
@@ -174,6 +180,7 @@ mod tests {
             config: Some(base64::encode(&format!("{}", "port = 4444"))),
             ring_secret_name: Some("deltaechofoxtrot".to_owned()),
             binds: vec![],
+            ports: vec![],
         };
 
         let expected = include_str!("../tests/KubernetesManifestTest.yaml");
@@ -198,9 +205,35 @@ mod tests {
             config: None,
             ring_secret_name: Some("deltaechofoxtrot".to_owned()),
             binds: vec!["name1:service1.group1".parse().unwrap()],
+            ports: vec![],
         };
 
         let expected = include_str!("../tests/KubernetesManifestTestBinds.yaml");
+
+        let mut o = vec![];
+        m.generate(&mut o).unwrap();
+
+        let out = String::from_utf8(o).unwrap();
+
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn test_manifest_generation_ports() {
+        let mut m = Manifest {
+            pkg_ident: PackageIdent::from_str("core/nginx").unwrap(),
+            metadata_name: "nginx-latest".to_owned(),
+            image: "core/nginx:latest".to_owned(),
+            count: 3,
+            service_topology: Default::default(),
+            service_group: Some("group1".to_owned()),
+            config: Some(base64::encode(&format!("{}", "port = 4444"))),
+            ring_secret_name: Some("deltaechofoxtrot".to_owned()),
+            binds: vec![],
+            ports: vec!["80".parse().unwrap()],
+        };
+
+        let expected = include_str!("../tests/KubernetesManifestTestPorts.yaml");
 
         let mut o = vec![];
         m.generate(&mut o).unwrap();

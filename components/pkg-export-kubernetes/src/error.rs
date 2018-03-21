@@ -24,6 +24,11 @@ pub enum Error {
                          <NAME> is a service name and <SERVICE_GROUP> is a valid service group",
            _0)]
     InvalidBinding(String),
+    #[fail(display = "Invalid port \"{}\", must be of the form <PORT> or <PORT>:<EXTERNAL_PORT> \
+                      where <EXTERNAL_PORT> is the port to reach from outside the Kubernetes
+                      clustes. If <EXTERNAL_PORT> is not specified, the value of <PORT> is used ",
+           _0)]
+    InvalidPort(String),
     #[fail(display = "{}", _0)]
     HabitatCore(hcore::Error),
 }

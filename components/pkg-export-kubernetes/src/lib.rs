@@ -35,6 +35,7 @@ pub mod error;
 pub mod manifest;
 pub mod manifestjson;
 pub mod service_bind;
+pub mod service_port;
 pub mod topology;
 pub mod cli;
 

@@ -14,8 +14,11 @@
 
 use clap::{App, Arg};
 use std::result;
+use std::str::FromStr;
 
 use export_docker as docker;
+
+use service_port;
 
 /// A Kubernetes-specific clap:App wrapper
 ///
@@ -50,6 +53,7 @@ impl<'a, 'b> Cli<'a, 'b> {
             .add_runtime_args()
             .add_secret_names_args()
             .add_bind_args()
+            .add_service_args()
     }
 
     pub fn add_docker_args(self) -> Self {
@@ -174,6 +178,24 @@ impl<'a, 'b> Cli<'a, 'b> {
             ),
         }
     }
+
+    pub fn add_service_args(self) -> Self {
+        Cli {
+            app: self.app.arg(
+                Arg::with_name("PORT")
+                    .value_name("PORT")
+                    .long("port")
+                    .multiple(true)
+                    .number_of_values(1)
+                    .validator(valid_service_port)
+                    .help(
+                        "Service port to be exposed outside the Kubernetes cluster, specified as \
+                         port or port:externalport (e.g 80 or 80:5001). If only a single port is \
+                         specified the service port the external port are assumed to be the same.",
+                    ),
+            ),
+        }
+    }
 }
 
 fn valid_natural_number(val: String) -> result::Result<(), String> {
@@ -183,6 +205,11 @@ fn valid_natural_number(val: String) -> result::Result<(), String> {
     }
 }
 
+fn valid_service_port(val: String) -> result::Result<(), String> {
+    service_port::ServicePort::from_str(&val)
+        .map(|_| ())
+        .map_err(|e| format!("{}", e))
+}
 
 #[cfg(test)]
 mod tests {
@@ -195,5 +222,17 @@ mod tests {
         for &s in ["x", "", "#####", "0x11", "ab"].iter() {
             assert!(valid_natural_number(s.to_owned()).is_err());
         }
+    }
+
+    #[test]
+    fn test_service_port() {
+        valid_service_port("77".to_owned()).unwrap();
+        valid_service_port("77:88".to_owned()).unwrap();
+
+        assert!(valid_service_port("65536".to_owned()).is_err());
+        assert!(valid_service_port("65536:65536".to_owned()).is_err());
+        assert!(valid_service_port("17,18".to_owned()).is_err());
+        assert!(valid_service_port("blah".to_owned()).is_err());
+        assert!(valid_service_port("blah:blah".to_owned()).is_err());
     }
 }

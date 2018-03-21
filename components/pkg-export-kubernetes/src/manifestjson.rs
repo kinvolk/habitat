@@ -40,6 +40,11 @@ impl ManifestJson {
             binds.push(bind.to_json());
         }
 
+        let mut ports = Vec::new();
+        for port in &manifest.ports {
+            ports.push(port.to_json());
+        }
+
         ManifestJson {
             value: json!({
                 "metadata_name": manifest.metadata_name,
@@ -51,6 +56,7 @@ impl ManifestJson {
                 "config": manifest.config,
                 "ring_secret_name": manifest.ring_secret_name,
                 "binds": binds,
+                "ports": ports,
             }),
         }
     }
