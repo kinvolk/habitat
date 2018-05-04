@@ -25,10 +25,12 @@ use protobuf;
 
 use error::Error;
 use member::{Health, Member};
-use message::swim::{Swim, Swim_Type};
+use message::{self,
+              swim::{Swim, Swim_Type, Zone as ProtoZone}};
 use network::{AddressAndPort, MyFromStr, Network, SwimReceiver};
 use server::{outbound, Server};
 use trace::TraceKind;
+use zone::Zone;
 
 /// Takes the Server and a channel to send received Acks to the outbound thread.
 pub struct Inbound<N: Network> {
@@ -178,6 +180,12 @@ impl<N: Network> Inbound<N> {
 
     /// Process ack messages; forwards to the outbound thread.
     fn process_ack(&self, addr: N::AddressAndPort, mut msg: Swim) {
+        if !self.handle_zone(msg.get_zones(), msg.get_ack().get_from().get_zone_id()) {
+            error!(
+                "Supervisor {} sent an Ack with a nil zone ID",
+                msg.get_ack().get_from().get_id(),
+            )
+        }
         trace_it!(SWIM: &self.server,
                   TraceKind::RecvAck,
                   msg.get_ack().get_from().get_id(),
@@ -223,21 +231,27 @@ impl<N: Network> Inbound<N> {
                 .collect();
             membership
         };
+        let zones = msg.take_zones()
+            .iter()
+            .map(|z| Zone::from(z))
+            .collect();
         match self.tx_outbound.send((addr, msg)) {
             Ok(()) => {}
             Err(e) => panic!("Outbound thread has died - this shouldn't happen: #{:?}", e),
         }
         self.server.insert_member_from_rumors(membership);
+        self.server.insert_zones_from_rumors(zones);
     }
 
     /// Process ping messages.
     fn process_ping(&self, addr: N::AddressAndPort, mut msg: Swim) {
+        let target: Member = msg.get_ping().get_from().into();
+        let insert_pinger = self.handle_zone(msg.get_zones(), msg.get_ping().get_from().get_zone_id());
         trace_it!(SWIM: &self.server,
                   TraceKind::RecvPing,
-                  msg.get_ping().get_from().get_id(),
+                  msg.get_ack().get_from().get_id(),
                   addr,
                   &msg);
-        let target: Member = msg.get_ping().get_from().into();
         if msg.get_ping().has_forward_to() {
             outbound::ack(
                 &self.server,
@@ -249,23 +263,185 @@ impl<N: Network> Inbound<N> {
         } else {
             outbound::ack(&self.server, &self.swim_sender, &target, addr, None);
         }
-        // Populate the member for this sender with its remote address
-        let from = {
-            let ping = msg.mut_ping();
-            let mut from = ping.take_from();
-            from.set_address(format!("{}", addr.get_address()));
-            from
-        };
-        trace!("Ping from {}@{}", from.get_id(), addr);
-        if from.get_departed() {
-            self.server.insert_member(from.into(), Health::Departed);
-        } else {
-            self.server.insert_member(from.into(), Health::Alive);
+        trace!("Ping from {}@{}", msg.get_ack().get_from().get_id(), addr);
+        if insert_pinger {
+            // Populate the member for this sender with its remote address
+            let from = {
+                let ping = msg.mut_ping();
+                let mut from = ping.take_from();
+                from.set_address(format!("{}", addr.get_address()));
+                from
+            };
+            if from.get_departed() {
+                self.server.insert_member(from.into(), Health::Departed);
+            } else {
+                self.server.insert_member(from.into(), Health::Alive);
+            }
+            let membership: Vec<(Member, Health)> = msg.take_membership()
+                .iter()
+                .map(|m| (Member::from(m.get_member()), Health::from(m.get_health())))
+                .collect();
+            self.server.insert_member_from_rumors(membership);
+            let zones = msg.take_zones()
+                .iter()
+                .map(|z| Zone::from(z))
+                .collect();
+            self.server.insert_zones_from_rumors(zones);
         }
-        let membership: Vec<(Member, Health)> = msg.take_membership()
-            .iter()
-            .map(|m| (Member::from(m.get_member()), Health::from(m.get_health())))
-            .collect();
-        self.server.insert_member_from_rumors(membership);
+    }
+
+    fn handle_zone(&self, zones: &[ProtoZone], sender_zone_id: &str) -> bool {
+        // scenarios:
+        // 0a. sender has nil id, i'm not settled
+        //   - generate my own zone id
+        // 0b. sender has nil id, i'm settled
+        //   - do nothing
+        // 1. i'm not settled, sender in the same zone as me
+        //   - assume sender's zone id
+        // 2. i'm not settled, sender in different zone than me
+        //   - generate my own zone id
+        // 3. i'm settled and sender in the same zone as me, senders zone id is lesser or equal than ours
+        //   - do nothing
+        // 4. i'm settled and sender in the same zone as me, senders zone id is greater than ours
+        //   - assume sender's zone id
+        // 5. i'm settled and sender in the different zone than me
+        //   - do nothing
+        let mut member = self.server.write_member();
+        let mut member_zone_uuid = message::parse_uuid(member.get_zone_id(), "our own zone id");
+        let mut zone_settled_guard = self.server.write_zone_settled();
+        let mut zone_settled = *zone_settled_guard;
+
+        let mut member_zone_changed = false;
+        let mut old_zone_is_dead = false;
+        let mut insert_member_zone = false;
+        let sender_in_the_same_zone_as_us = true;
+        let mut insert_sender_member = true;
+        let mut maybe_sender_zone = Self::get_zone_from_protozones(zones, sender_zone_id);
+
+        let dbg_scenario;
+        let dbg_was_settled = zone_settled;
+        let dbg_our_old_zone_id = member_zone_uuid.clone();
+
+        if let Some(sender_zone) = maybe_sender_zone.take() {
+            let sender_zone_uuid = sender_zone.get_uuid();
+
+            if sender_zone_uuid.is_nil() {
+                // this shouldn't happen
+                if !zone_settled {
+                    // 0a.
+                    dbg_scenario = "0a. should not happen";
+                    member_zone_uuid = message::parse_uuid(&message::generate_uuid(), "our new own zone id");
+                    member.set_zone_id(member_zone_uuid.to_string());
+                    member_zone_changed = true;
+                    insert_member_zone = true;
+                    zone_settled = true;
+                } else {
+                    // 0b.
+                    dbg_scenario = "0b. should not happen";
+                }
+                insert_sender_member = false;
+            } else if !zone_settled {
+                if sender_in_the_same_zone_as_us {
+                    // 1.
+                    dbg_scenario = "1.";
+                    member_zone_uuid = sender_zone_uuid.clone();
+                    member.set_zone_id(member_zone_uuid.to_string());
+                    member_zone_changed = true;
+                } else {
+                    // 2.
+                    dbg_scenario = "2.";
+                    member_zone_uuid = message::parse_uuid(&message::generate_uuid(), "our new own zone id");
+                    member.set_zone_id(member_zone_uuid.to_string());
+                    member_zone_changed = true;
+                    insert_member_zone = true;
+                }
+                zone_settled = true;
+            } else {
+                if sender_in_the_same_zone_as_us {
+                    if sender_zone_uuid <= member_zone_uuid {
+                        // 3.
+                        dbg_scenario = "3.";
+                    } else {
+                        // 4.
+                        dbg_scenario = "4.";
+                        member_zone_uuid = sender_zone_uuid.clone();
+                        member.set_zone_id(member_zone_uuid.to_string());
+                        member_zone_changed = true;
+                        old_zone_is_dead = true;
+                    }
+                } else {
+                    // 5.
+                    dbg_scenario = "5.";
+                }
+            }
+            if insert_sender_member {
+                maybe_sender_zone = Some(sender_zone)
+            }
+        } else {
+            if !zone_settled {
+                // 0a.
+                dbg_scenario = "0a.";
+                member_zone_uuid = message::parse_uuid(&message::generate_uuid(), "our new own zone id");
+                member.set_zone_id(member_zone_uuid.to_string());
+                member_zone_changed = true;
+                insert_member_zone = true;
+                zone_settled = true;
+            } else {
+                dbg_scenario = "0b.";
+                // 0b.
+            }
+            insert_sender_member = false;
+        }
+
+        *zone_settled_guard = zone_settled;
+        if member_zone_changed {
+            let mut member_clone = (*member).clone();
+            let incarnation = member_clone.get_incarnation();
+
+            member_clone.set_incarnation(incarnation + 1);
+            self.server.insert_member(member_clone, Health::Alive);
+        }
+        if insert_member_zone {
+            self.server
+                .insert_zone(Zone::new(member_zone_uuid.to_string()));
+        }
+        if let Some(sender_zone) = maybe_sender_zone {
+            self.server.insert_zone(sender_zone);
+        }
+        if old_zone_is_dead {
+            // TODO: if I'm the maintainer of the old zone, update the
+            // zone info to mark it as dead and send acks to
+            // maintainers of parent/children zones of the old zone
+        }
+
+        println!(
+            "sender zone id: {}, \
+             scenario: {}, \
+             was settled: {}, \
+             our old zone id: {}, \
+             our new zone id: {}, \
+             insert pinger: {}",
+            sender_zone_id,
+            dbg_scenario,
+            dbg_was_settled,
+            dbg_our_old_zone_id,
+            member_zone_uuid,
+            insert_sender_member);
+
+        insert_sender_member
+    }
+
+    fn get_zone_from_protozones(zones: &[ProtoZone], zone_id: &str) -> Option<Zone> {
+        let zone_ids = zones.iter()
+            .map(|z| z.get_id())
+            .collect::<Vec<_>>();
+        for zone in zones {
+            if zone.get_id() == zone_id {
+                println!("get_zone_from_protozones: found zone id {} in {:?}", zone_id, zone_ids);
+                return Some(zone.into());
+            }
+        }
+        println!("get_zone_from_protozones: did not find zone id {} in {:?}", zone_id, zone_ids);
+        return None;
     }
 }

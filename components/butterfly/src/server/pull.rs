@@ -108,6 +108,9 @@ impl<N: Network> Pull<N> {
                 Rumor_Type::Fake | Rumor_Type::Fake2 => {
                     debug!("Nothing to do for fake rumor types")
                 }
+                Rumor_Type::Zone => {
+                    self.server.insert_zone(proto.into());
+                }
             }
         }
     }

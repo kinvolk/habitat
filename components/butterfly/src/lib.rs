@@ -66,5 +66,6 @@ pub mod message;
 pub mod network;
 pub mod rumor;
 pub mod server;
+pub mod zone;
 
 pub use server::Server;

@@ -115,13 +115,7 @@ impl<N: Network> Outbound<N> {
 
             let long_wait = self.timing.next_protocol_period();
 
-            let check_list = self.server.member_list.check_list(
-                self.server
-                    .member
-                    .read()
-                    .expect("Member is poisoned")
-                    .get_id(),
-            );
+            let check_list = self.server.member_list.check_list(self.server.member_id());
 
             for member in check_list {
                 if self.server.member_list.pingable(&member) {
@@ -267,6 +261,8 @@ pub fn populate_membership_rumors<N: Network>(
     swim: &mut Swim,
 ) {
     let mut membership_entries = RepeatedField::new();
+    // TODO (CM): magic number!
+    let magic_number = 5;
     // If this isn't the first time we are communicating with this target, we want to include this
     // targets current status. This ensures that members always get a "Confirmed" rumor, before we
     // have the chance to flip it to "Alive", which helps make sure we heal from a partition.
@@ -278,11 +274,12 @@ pub fn populate_membership_rumors<N: Network>(
 
     // NOTE: the way this is currently implemented, this is grabbing
     // the 5 coolest (but still warm!) Member rumors.
-    let rumors: Vec<RumorKey> = server.rumor_heat
+    let rumors: Vec<RumorKey> = server
+        .rumor_heat
         .currently_hot_rumors(target.get_id())
         .into_iter()
         .filter(|ref r| r.kind == Rumor_Type::Member)
-        .take(5) // TODO (CM): magic number!
+        .take(magic_number)
         .collect();
 
     for ref rkey in rumors.iter() {
@@ -290,13 +287,51 @@ pub fn populate_membership_rumors<N: Network>(
             membership_entries.push(member);
         }
     }
+    swim.set_membership(membership_entries);
+
+    let mut zone_entries = RepeatedField::new();
+    let our_own_zone_id = server.read_member().get_zone_id().to_string();
+    let mut our_own_zone_gossiped = false;
+    let zone_rumors = server
+        .rumor_heat
+        .currently_hot_rumors(target.get_id())
+        .into_iter()
+        .filter(|ref r| r.kind == Rumor_Type::Zone)
+        .take(magic_number)
+        .collect::<Vec<_>>();
+
+    {
+        let zone_list = server.read_zone_list();
+
+        for ref rkey in zone_rumors.iter() {
+            if let Some(zone) = zone_list.zones.get(&rkey.id) {
+                zone_entries.push(zone.proto.clone());
+                if rkey.id == our_own_zone_id {
+                    our_own_zone_gossiped = true;
+                }
+            }
+        }
+    }
+    // Always include zone information of the sender
+    let zone_settled = *(server.read_zone_settled());
+    if zone_settled && !our_own_zone_gossiped {
+        if let Some(zone) = server.read_zone_list().get(&server.get_settled_zone_id()) {
+            println!("found our own zone ({}) found, ok", server.read_member().get_zone_id());
+            zone_entries.push(zone.proto.clone());
+        } else {
+            println!("our own zone ({}) not found, wtf? available zones: {:?}", server.read_member().get_zone_id(), server.read_zone_list().available_zone_ids());
+        }
+    } else {
+        println!("not adding any zone info to msg, we are not settled or our zone is already being gossiped");
+    }
     // We don't want to update the heat for rumors that we know we are sending to a target that is
     // confirmed dead; the odds are, they won't receive them. Lets spam them a little harder with
     // rumors.
     if !server.member_list.persistent_and_confirmed(target) {
         server.rumor_heat.cool_rumors(target.get_id(), &rumors);
+        server.rumor_heat.cool_rumors(target.get_id(), &zone_rumors);
     }
-    swim.set_membership(membership_entries);
+    swim.set_zones(zone_entries);
 }
 
 /// Send a PingReq.
@@ -311,7 +346,7 @@ pub fn pingreq<N: Network>(
     swim.set_field_type(Swim_Type::PINGREQ);
     let mut pingreq = PingReq::new();
     {
-        let member = server.member.read().unwrap();
+        let member = server.read_member();
         pingreq.set_from(member.proto.clone());
     }
     pingreq.set_target(target.proto.clone());
@@ -369,7 +404,7 @@ pub fn ping<N: Network>(
     swim.set_field_type(Swim_Type::PING);
     let mut ping = Ping::new();
     {
-        let member = server.member.read().unwrap();
+        let member = server.read_member();
         ping.set_from(member.proto.clone());
     }
     if forward_to.is_some() {
@@ -475,7 +510,7 @@ pub fn ack<N: Network>(
     swim.set_field_type(Swim_Type::ACK);
     let mut ack = Ack::new();
     {
-        let member = server.member.read().unwrap();
+        let member = server.read_member();
         ack.set_from(member.proto.clone());
     }
     if forward_to.is_some() {

@@ -63,7 +63,7 @@ impl FromStr for ZoneID {
     fn from_str(s: &str) -> StdResult<Self, Self::Err> {
         let raw_self = s.parse()
             .map_err(|e| format!("'{}' is not a u8: {}", s, e))?;
-        if Self::is_raw_valid(raw_self) {
+        if !Self::is_raw_valid(raw_self) {
             return Err(format!("{} is not a valid ZoneID", raw_self));
         }
 
@@ -181,6 +181,7 @@ impl ZoneMap {
         }
     }
 
+    /*
     // This is basically a duplication of the is_zone_child_of
     // function, but without locking the mutex. Locking of the mutex
     // can be skipped, because here we own a mutable reference to
@@ -201,6 +202,7 @@ impl ZoneMap {
         }
         false
     }
+     */
 
     pub fn is_zone_child_of_mut(&mut self, child_id: ZoneID, parent_id: ZoneID) -> bool {
         let mut queue = VecDeque::new();
@@ -313,6 +315,7 @@ impl ZoneMap {
         }
     }
 
+    /*
     fn get_zone_guard(&self, zone_id: ZoneID) -> MutexGuard<ZoneInfo> {
         self.0
             .get(&zone_id)
@@ -320,6 +323,7 @@ impl ZoneMap {
             .lock()
             .expect(&format!("Zone {} lock is poisoned", zone_id))
     }
+     */
 
     fn get_zone_mut(&mut self, zone_id: ZoneID) -> &mut ZoneInfo {
         self.0
@@ -452,7 +456,7 @@ impl FromStr for TestAddrParts {
             }
         }
 
-        if final_states.contains(&state) {
+        if !final_states.contains(&state) {
             return Err(Self::Err::new(s, "premature end of address string"));
         }
 
@@ -540,7 +544,7 @@ impl TestPublicAddr {
 
 impl Display for TestPublicAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "[public]{{{}, {}}}", self.zone_id, self.idx)
+        write!(f, "[public]{{{},{}}}", self.zone_id, self.idx)
     }
 }
 
@@ -621,7 +625,7 @@ impl TestLocalAddr {
 
 impl Display for TestLocalAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "[local]{{{}, {}}}", self.zone_id, self.idx)
+        write!(f, "[local]{{{},{}}}", self.zone_id, self.idx)
     }
 }
 
@@ -703,7 +707,7 @@ impl Display for TestPersistentMappingAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "[perm-map]{{{}, {}}}",
+            "[perm-map]{{{},{}}}",
             self.parent_zone_id, self.child_zone_id
         )
     }
@@ -807,7 +811,7 @@ impl Display for TestTemporaryMappingAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "[temp-map]{{{}, {}, {}, {}, {}}}",
+            "[temp-map]{{{},{},{},{},{}}}",
             self.parent_zone_id,
             self.parent_server_idx,
             self.child_zone_id,
@@ -1181,7 +1185,7 @@ impl<T> LockedSender<T> {
 // ChannelMap is a mapping from IP address to an mpsc::Sender.
 type ChannelMap = HashMap<TestAddrAndPort, LockedSender<TestMessage>>;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum ChannelType {
     SWIM,
     Gossip,
@@ -1517,6 +1521,53 @@ impl TestNetworkSwitchBoard {
         true
     }
 
+    pub fn wait_for_same_settled_zone(&self, servers: Vec<&TestServer>) -> bool {
+        self.wait_for_disjoint_settled_zones(vec![servers])
+    }
+
+    pub fn wait_for_disjoint_settled_zones(&self, disjoint_servers: Vec<Vec<&TestServer>>) -> bool {
+        let rounds_in = self.gossip_rounds_in(4);
+        loop {
+            if Self::check_for_disjoint_settled_zones(&disjoint_servers) {
+                return true;
+            }
+            if self.reached_max_rounds(&rounds_in) {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    fn check_for_disjoint_settled_zones(disjoint_servers: &Vec<Vec<&TestServer>>) -> bool {
+        for servers in disjoint_servers.iter() {
+            for pair in servers.windows(2) {
+                let s0 = &pair[0];
+                let s1 = &pair[1];
+
+                if !s0.butterfly.is_zone_settled() {
+                    return false;
+                }
+                if !s1.butterfly.is_zone_settled() {
+                    return false;
+                }
+                if s0.butterfly.get_settled_zone_id() != s1.butterfly.get_settled_zone_id() {
+                    return false;
+                }
+            }
+        }
+
+        let mut zone_uuids = disjoint_servers
+            .iter()
+            .filter_map(|v| v.first().map(|s| s.butterfly.get_settled_zone_id()))
+            .collect::<Vec<_>>();
+        zone_uuids.sort_unstable();
+
+        let zones_count = zone_uuids.len();
+
+        zone_uuids.dedup();
+        zones_count == zone_uuids.len()
+    }
+
     fn start_server(&self, addr: TestAddrAndPort, _holes: Vec<NatHole>) -> TestServer {
         let network = self.create_test_network(addr);
         let mut servers = self.write_servers();
@@ -1629,6 +1680,8 @@ impl TestNetworkSwitchBoard {
     }
 
     fn process_msg(&self, mut msg: TestMessage, channel_type: ChannelType) {
+        let src = msg.source;
+        let tgt = msg.target;
         let source_zone_id = match &msg.source.addr {
             &TestAddr::Public(ref pip) => pip.get_zone_id(),
             &TestAddr::Local(ref lip) => lip.get_zone_id(),
@@ -1708,6 +1761,7 @@ impl TestNetworkSwitchBoard {
                 }
             }
         }
+        println!("source: {}, target: {}, channel type: {:?}, can route across zones: {}, routed: {}", src, tgt, channel_type, can_route_across_zones, routed);
     }
 
     /*

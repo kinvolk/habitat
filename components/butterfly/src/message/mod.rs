@@ -21,10 +21,32 @@ use habitat_core::crypto::SymKey;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use toml;
+use uuid::Uuid;
 
 use error::Result;
 use message::swim::Wire;
 use protobuf::{self, Message};
+
+// This is a Uuid type turned to a string
+pub type UuidSimple = String;
+
+pub fn nil_uuid() -> UuidSimple {
+    Uuid::nil().simple().to_string()
+}
+
+pub fn generate_uuid() -> UuidSimple {
+    Uuid::new_v4().simple().to_string()
+}
+
+pub fn parse_uuid(input: &str, what: &str) -> Uuid {
+    match Uuid::parse_str(input) {
+        Ok(u) => u,
+        Err(e) => {
+            error!("Zone: cannot parse {}: {}, {}", what, input, e);
+            Uuid::nil()
+        }
+    }
+}
 
 pub fn generate_wire(payload: Vec<u8>, ring_key: Option<&SymKey>) -> Result<Vec<u8>> {
     let mut wire = Wire::new();
