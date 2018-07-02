@@ -76,8 +76,10 @@ pub fn start_server(name: &str, ring_key: Option<SymKey>, suitability: u64) -> S
     member.set_swim_port(swim_port as i32);
     member.set_gossip_port(gossip_port as i32);
     let network = RealNetwork::new_for_server(listen_swim, listen_gossip);
+    let host_address = network.get_host_address().expect("Cannot get real host address");
     let mut server = Server::new(
         network,
+        host_address,
         member,
         Trace::default(),
         ring_key,

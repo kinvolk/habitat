@@ -27,6 +27,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use habitat_core::util::sys as core_sys;
+
 use error::{Error, Result};
 
 use zmq;
@@ -42,8 +44,11 @@ pub trait MyFromStr: FromStr {
     }
 }
 
+pub trait Address: MyFromStr + Debug + Copy + Clone + Display + Send + Sync + PartialEq {
+}
+
 pub trait AddressAndPort: MyFromStr + Copy + Clone + Debug + Display + Send + Sync {
-    type Address: MyFromStr + Debug + Display;
+    type Address: Address;
 
     fn new_from_address_and_port(addr: Self::Address, port: u16) -> Self;
     fn get_address(&self) -> Self::Address;
@@ -96,6 +101,7 @@ pub trait Network: Send + Sync + Debug + 'static {
     type GossipSender: GossipSender;
     type GossipReceiver: GossipReceiver;
 
+    fn get_host_address(&self) -> Result<<Self::AddressAndPort as AddressAndPort>::Address>;
     fn get_swim_addr(&self) -> Self::AddressAndPort;
     fn create_swim_sender(&self) -> Result<Self::SwimSender>;
     fn create_swim_receiver(&self) -> Result<Self::SwimReceiver>;
@@ -107,6 +113,9 @@ pub trait Network: Send + Sync + Debug + 'static {
 
 impl MyFromStr for IpAddr {
     type MyErr = <Self as FromStr>::Err;
+}
+
+impl Address for IpAddr {
 }
 
 impl MyFromStr for SocketAddr {
@@ -292,6 +301,10 @@ impl Network for RealNetwork {
     type SwimReceiver = SwimUdpSocket;
     type GossipReceiver = GossipZmqSocket;
     type GossipSender = GossipZmqSocket;
+
+    fn get_host_address(&self) -> Result<IpAddr> {
+        core_sys::ip().map_err(|e| e.into())
+    }
 
     fn get_swim_addr(&self) -> SocketAddr {
         self.swim_addr
