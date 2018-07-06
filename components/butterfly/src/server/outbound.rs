@@ -26,7 +26,7 @@ use protobuf::{Message, RepeatedField};
 use time::SteadyTime;
 
 use member::{Health, Member};
-use message::swim::{Ack, Ping, PingReq, Rumor_Type, Swim, Swim_Type};
+use message::swim::{Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type};
 use network::{AddressAndPort, Network, SwimSender};
 use rumor::RumorKey;
 use server::timing::Timing;
@@ -119,6 +119,12 @@ impl<N: Network> Outbound<N> {
 
             for member in check_list {
                 if self.server.member_list.pingable(&member) {
+                    let reachable = self.directly_reachable(&member);
+
+                    println!("is member {:#?} directly reachable from {:#?}: {}", member, *self.server.read_member(), reachable);
+                    if !reachable{
+                        continue;
+                    }
                     // This is the timeout for the next protocol period - if we
                     // complete faster than this, we want to wait in the end
                     // until this timer expires.
@@ -146,6 +152,77 @@ impl<N: Network> Outbound<N> {
         }
     }
 
+    fn directly_reachable(&self, member: &Member) -> bool {
+        let our_zone_id = self.server.read_member().get_zone_id().to_string();
+        let their_zone_id = member.get_zone_id();
+
+        if our_zone_id == their_zone_id {
+            return true;
+        }
+
+        if let Some(zone) = self.server.read_zone_list().zones.get(&our_zone_id) {
+            if zone.get_successor() == their_zone_id {
+                return true;
+            }
+            for zone_id in zone.get_predecessors().iter() {
+                if zone_id == their_zone_id {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(zone) = self.server.read_zone_list().zones.get(&their_zone_id) {
+            if zone.get_successor() == our_zone_id {
+                return true;
+            }
+            for zone_id in zone.get_predecessors().iter() {
+                if zone_id == our_zone_id {
+                    return true;
+                }
+            }
+        }
+
+        for zone_address in member.get_additional_addresses() {
+            let additional_zone_id = zone_address.get_zone_id();
+
+            if additional_zone_id == our_zone_id {
+                return true;
+            }
+
+            if let Some(zone) = self.server.read_zone_list().zones.get(&additional_zone_id) {
+                if zone.get_successor() == our_zone_id {
+                    return true;
+                }
+                for zone_id in zone.get_predecessors().iter() {
+                    if zone_id == our_zone_id {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for zone_address in self.server.read_member().get_additional_addresses() {
+            let additional_zone_id = zone_address.get_zone_id();
+
+            if zone_address.get_zone_id() == their_zone_id {
+                return true;
+            }
+
+            if let Some(zone) = self.server.read_zone_list().zones.get(&additional_zone_id) {
+                if zone.get_successor() == their_zone_id {
+                    return true;
+                }
+                for zone_id in zone.get_predecessors().iter() {
+                    if zone_id == their_zone_id {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     ///
     /// Probe Loop
     ///
@@ -163,7 +240,7 @@ impl<N: Network> Outbound<N> {
     ///
     /// If we don't receive anything at all in the Ping/PingReq loop, we mark the member as Suspect.
     fn probe(&mut self, member: Member) {
-        let addr = member.swim_socket_address();
+        let addr = member.swim_socket_address_for_zone(self.server.read_member().get_zone_id());
 
         trace_it!(PROBE: &self.server, TraceKind::ProbeBegin, member.get_id(), addr);
 
@@ -254,6 +331,13 @@ impl<N: Network> Outbound<N> {
     }
 }
 
+pub fn create_to_member<AP: AddressAndPort>(addr: AP) -> ProtoMember {
+    let mut proto_member = ProtoMember::new();
+    proto_member.set_address(addr.get_address().to_string());
+    proto_member.set_swim_port(addr.get_port().into());
+    proto_member
+}
+
 /// Populate a SWIM message with rumors.
 pub fn populate_membership_rumors<N: Network>(
     server: &Server<N>,
@@ -316,13 +400,8 @@ pub fn populate_membership_rumors<N: Network>(
     let zone_settled = *(server.read_zone_settled());
     if zone_settled && !our_own_zone_gossiped {
         if let Some(zone) = server.read_zone_list().get(&server.get_settled_zone_id()) {
-            println!("found our own zone ({}) found, ok", server.read_member().get_zone_id());
             zone_entries.push(zone.proto.clone());
-        } else {
-            println!("our own zone ({}) not found, wtf? available zones: {:?}", server.read_member().get_zone_id(), server.read_zone_list().available_zone_ids());
         }
-    } else {
-        println!("not adding any zone info to msg, we are not settled or our zone is already being gossiped");
     }
     // We don't want to update the heat for rumors that we know we are sending to a target that is
     // confirmed dead; the odds are, they won't receive them. Lets spam them a little harder with
@@ -411,6 +490,7 @@ pub fn ping<N: Network>(
         let member = forward_to.take().unwrap();
         ping.set_forward_to(member.proto);
     }
+    ping.set_to(create_to_member(addr));
     swim.set_ping(ping);
     populate_membership_rumors(server, target, &mut swim);
 
@@ -517,6 +597,7 @@ pub fn ack<N: Network>(
         let member = forward_to.take().unwrap();
         ack.set_forward_to(member.proto);
     }
+    ack.set_to(create_to_member(addr));
     swim.set_ack(ack);
     populate_membership_rumors(server, target, &mut swim);
 
@@ -551,6 +632,55 @@ pub fn ack<N: Network>(
     trace_it!(
         SWIM: server,
         TraceKind::SendAck,
+        target.get_id(),
+        addr,
+        &swim
+    );
+}
+
+/// Send a ZoneChange.
+pub fn zone_change<N: Network>(
+    server: &Server<N>,
+    swim_sender: &N::SwimSender,
+    target: &Member,
+    zone_change: ZoneChange,
+) {
+    let mut swim = Swim::new();
+    swim.set_field_type(Swim_Type::ZONE_CHANGE);
+    swim.set_zone_change(zone_change);
+
+    let bytes = match swim.write_to_bytes() {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error!("Generating protobuf failed: {}", e);
+            return;
+        }
+    };
+    let payload = match server.generate_wire(bytes) {
+        Ok(payload) => payload,
+        Err(e) => {
+            error!("Generating protobuf failed: {}", e);
+            return;
+        }
+    };
+    let addr = target.get_swim_socket_address();
+
+    match swim_sender.send(&payload, addr) {
+        Ok(_s) => trace!(
+            "Sent zone change to {}@{}",
+            target.get_id(),
+            addr
+        ),
+        Err(e) => error!(
+            "Failed zone change to {}@{}: {}",
+            target.get_id(),
+            addr,
+            e
+        ),
+    }
+    trace_it!(
+        SWIM: server,
+        TraceKind::SendZoneChange,
         target.get_id(),
         addr,
         &swim

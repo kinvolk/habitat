@@ -25,7 +25,8 @@ message Zone {
   optional string maintainer_id = 3;
   optional string parent_zone_id = 4;
   repeated string child_zone_ids = 5;
-  optional string dead_in_favor_of = 6;
+  optional string successor = 6;
+  repeated string predecessors = 7;
 }
 
 message Ping {
@@ -44,6 +45,13 @@ message PingReq {
   optional Member from = 1;
   optional Member target = 2;
   optional Member to = 3;
+}
+
+message ZoneChange {
+  optional string zone_id = 1;
+  optional Zone new_successor = 2;
+  repeated Zone new_predecessors = 3;
+  repeated string drop_predecessors = 4;
 }
 
 message Membership {
@@ -106,7 +114,7 @@ message Departure {
 }
 
 message Swim {
-  enum Type { PING = 1; ACK = 2; PINGREQ = 3; };
+  enum Type { PING = 1; ACK = 2; PINGREQ = 3; ZONE_CHANGE = 4; };
 
   // Identifies which field is filled in.
   required Type type = 1;
@@ -114,6 +122,7 @@ message Swim {
     Ping ping = 2;
     Ack ack = 3;
     PingReq pingreq = 4;
+    ZoneChange zone_change = 7;
   }
   repeated Membership membership = 5;
   repeated Zone zones = 6;

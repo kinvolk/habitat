@@ -144,6 +144,7 @@ impl<N: Network> Server<N> {
     where
         P: Into<PathBuf> + AsRef<ffi::OsStr>,
     {
+        member.set_address(host_address.to_string());
         member.set_swim_port(network.get_swim_addr().get_port() as i32);
         member.set_gossip_port(network.get_gossip_addr().get_port() as i32);
         Self {
@@ -1027,9 +1028,7 @@ impl<N: Network> Server<N> {
 
     pub fn get_settled_zone_id(&self) -> UuidSimple {
         if self.is_zone_settled() {
-            self.member
-                .read()
-                .expect("Member lock is poisoned")
+            self.read_member()
                 .get_zone_id()
                 .to_owned()
         } else {

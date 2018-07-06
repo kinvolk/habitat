@@ -47,6 +47,7 @@ pub enum TraceKind {
     SendPing,
     SendPingReq,
     SendRumor,
+    SendZoneChange,
     TestEvent,
 }
 
@@ -71,6 +72,7 @@ impl fmt::Display for TraceKind {
             TraceKind::SendPing => write!(f, "SendPing"),
             TraceKind::SendPingReq => write!(f, "SendPingReq"),
             TraceKind::SendRumor => write!(f, "SendRumor"),
+            TraceKind::SendZoneChange => write!(f, "SendZoneChange"),
             TraceKind::TestEvent => write!(f, "TestEvent"),
         }
     }

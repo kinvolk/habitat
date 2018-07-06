@@ -46,7 +46,30 @@ fn sibling_zones_get_merged() {
 }
 
 #[test]
-fn different_zones_get_different_ids() {
+fn different_zones_get_different_ids_few() {
+    let switch_board = TestNetworkSwitchBoard::new();
+    let parent_zone = ZoneID::new(1);
+    let child_zone = ZoneID::new(2);
+    let mut nat = switch_board.setup_nat(
+        parent_zone,
+        child_zone,
+        //None,
+    );
+    let hole0 = nat.punch_hole();
+    let parent_server0 = switch_board.start_server_in_zone(parent_zone);
+    let child_server0 = switch_board.start_server_in_zone_with_holes(child_zone, vec![hole0]);
+
+    nat.make_route(hole0, child_server0.addr);
+    parent_server0.talk_to(vec![&hole0]);
+    assert!(switch_board.wait_for_health_all(Health::Alive));
+    assert!(switch_board.wait_for_disjoint_settled_zones(vec![
+        vec![&parent_server0],
+        vec![&child_server0],
+    ]));
+}
+
+#[test]
+fn different_zones_get_different_ids_many() {
     let switch_board = TestNetworkSwitchBoard::new();
     let parent_zone = ZoneID::new(1);
     let child_zone = ZoneID::new(2);
