@@ -32,10 +32,11 @@ pub struct Zone {
 }
 
 impl Zone {
-    pub fn new(id: UuidSimple) -> Self {
+    pub fn new(id: UuidSimple, maintainer_id: UuidSimple) -> Self {
         let mut proto_zone = ProtoZone::new();
         proto_zone.set_id(id);
         proto_zone.set_incarnation(0);
+        proto_zone.set_maintainer_id(maintainer_id);
         Zone { proto: proto_zone }
     }
 

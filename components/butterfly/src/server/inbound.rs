@@ -184,6 +184,18 @@ impl<N: Network> Inbound<N> {
                             }
                             self.process_pingreq(addr, msg);
                         }
+                        Swim_Type::ZONE_CHANGE => {
+                            if self.server
+                                .is_member_blocked(msg.get_zone_change().get_from().get_id())
+                            {
+                                debug!(
+                                    "Not processing message from {} - it is blocked",
+                                    msg.get_zone_change().get_from().get_iid()
+                                );
+                                continue;
+                            }
+                            self.process_zone_change(addr, msg);
+                        }
                     }
                 }
                 Err(Error::SwimReceiveIOError(e)) => {
@@ -383,6 +395,141 @@ impl<N: Network> Inbound<N> {
                 .map(|z| Zone::from(z))
                 .collect();
             self.server.insert_zones_from_rumors(zones);
+        }
+    }
+
+    fn process_zone_change(&self, addr: N::AddressAndPort, mut msg: Swim) {
+        trace_it!(SWIM: &self.server,
+                  TraceKind::RecvZoneChange,
+                  msg.get_zone_change().get_from().get_id(),
+                  addr,
+                  &msg);
+        trace!("Zone change from {}@{}", msg.get_zone_change().get_from().get_id(), addr);
+        self.process_zone_change_internal(msg.get_zone_change());
+    }
+
+    fn process_zone_change_internal(&self, zone_change: &ZoneChange) {
+        if let Some(zone) = self.server.read_zone_list().zones.get(zone_change.get_zone_id()) {
+            if zone.get_maintainer_id() == self.server.member_id() {
+                let mut possible_predecessor = None;
+                let mut zone_changed = false;
+                let mut member_changed = false;
+                let mut our_zone = self.server.read_zone_list().zones.get(self.server.read_member().get_zone_id()).cloned().unwrap();
+                let mut our_successor_to_inform = None;
+                let mut our_predecessors_to_inform = Vec::new();
+                let mut our_member = *(self.server.read_member()).clone();
+
+                if zone_change.has_new_successor() && zone_change.get_new_successor() != our_zone.get_id() {
+                    let successor = zone_change.get_new_successor();
+                    let mut successor_zone_uuid = message::parse_uuid(successor.get_id(), "successor zone id");
+                    if our_zone.has_successor() {
+                        let mut our_successor_zone_uuid = message::parse_uuid(our_zone.get_successor(), "successor zone id");
+
+                        if successor_zone_uuid < our_successor_zone_uuid {
+                            possible_predecessor = Some(successor);
+                        } else if successor_zone_uuid > our_successor_zone_uuid {
+                            possible_predessor = Some(self.server.read_zone_list().zones.get(our_zone.get_successor()).unwrap());
+                            our_zone.set_successor(successor.get_id());
+                            zone_changed = true;
+                            our_successor_to_inform = Some(successor.get_id());
+                        }
+
+                        if our_member.get_uuid() < successor_zone_uuid {
+                            our_member.set_zone_id(successor.get_id());
+                            member_changed = true;
+                        }
+                    }
+                    if let Some(predecessor) = possible_predecessor {
+                        let mut found = false;
+
+                        for zone id in our_zone.get_predecessors().iter() {
+                            if zone_id == predecessor.get_id() {
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if !found {
+                            our_zone.mut_predecessors().push(predecessor.get_id().to_string());
+                            zone_changed = true;
+                            our_predecessor_to_inform.push(predecessor.get_maintainer_id());
+                        }
+                    }
+                }
+                if zone_change.has_new_predecessors() {
+                    for predecessor in zone_change.get_new_predecessors().iter() {
+                        if predecessor.get_id() == our_zone.get_id() {
+                            // haha, v.funny
+                            continue;
+                        }
+                        let mut found = false;
+
+                        for zone_id in our_zone.get_predecessors().iter() {
+                            found = true;
+                            break;
+                        }
+
+                        if !found {
+                            our_zone.mut_predecessors().push(predecessor.get_id().to_string());
+                            zone_changed = true;
+                            our_predecessor_to_inform.push(predecessor.get_maintainer_id());;
+                        }
+                    }
+                }
+
+                if msg.get_zone_changed().has_new_successor() {
+                    self.server.insert_zone(msg.get_zone_changed().get_new_successor().into());
+                }
+                for predecessor in msg.get_zone_changed().get_new_predecessors() {
+                    self.server.insert_zone(predecessor.into());
+                }
+                if zone_changed {
+                    let incarnation = our_zone.get_incarnation();
+
+                    our_zone.set_incarnation(incarnation + 1);
+                    self.server.insert_zone(our_zone);
+                }
+
+                if member_changed {
+                    let incarnation = our_member.get_incarnation();
+
+                    our_member.set_incarnation(incarnation + 1);
+                    self.server.insert_member(our_member);
+                }
+
+                if let Some(successor_id) = our_successor_to_inform {
+                    let maintainer_id = self.server.read_zone_list().zones.get(successor_id).unwrap().get_maintainer_id();
+                    self.server.member_list.with_member(maintainer_id, |maybe_maintainer| {
+                        if let Some(maintainer) = maybe_maintainer {
+                            let mut zone_change = ZoneChange::new();
+                            let mut predecessors = RepeatedField::new();
+
+                            predecessors.push(self.server.read_zone_list().zones.get(self.server.read_member().get_zone_id()).unwrap());
+                            zone_change.set_zone_id(successor_id);
+                            zone_change.set_new_predecessors(predecessors);
+                            outbound::zone_change(&self.server, &self.swim_sender, maintainer, zone_change);
+                        }
+                    });
+                }
+                for predecessor_id = our_predecessors_to_inform {
+                    let maintainer_id = self.server.read_zone_list().zones.get(predecessor_id).unwrap().get_maintainer_id();
+                    self.server.member_list.with_member(maintainer_id, |maybe_maintainer| {
+                        if let Some(maintainer) = maybe_maintainer {
+                            let mut zone_change = ZoneChange::new();
+
+                            zone_change.set_zone_id(predecessor_id);
+                            zone_change.set_new_successor(self.server.read_zone_list().zones.get(self.server.read_member().get_zone_id()).unwrap());
+                            outbound::zone_change(&self.server, &self.swim_sender, maintainer, zone_change);
+                        }
+                    });
+                }
+            } else {
+                self.server.member_list.with_member(zone.get_maintainer_id(), |maybe_maintainer| {
+                    if let Some(maintainer) = maybe_maintainer {
+                        outbound::zone_change(&self.server, &self.swim_sender, maintainer, zone_change);
+                    }
+                });
+            }
         }
     }
 
@@ -631,10 +778,9 @@ impl<N: Network> Inbound<N> {
         //   - assume sender's zone id
         // 5. i'm settled and sender in the different zone than me
         //   - store sender zone id and the recipient address
-        let mut member = self.server.write_member();
+        let mut member = *(self.server.read_member()).clone();
         let mut member_zone_uuid = message::parse_uuid(member.get_zone_id(), "our own zone id");
-        let mut zone_settled_guard = self.server.write_zone_settled();
-        let mut zone_settled = *zone_settled_guard;
+        let mut zone_settled = *(self.server.read_zone_settled());
 
         let mut member_zone_changed = false;
         let mut old_zone_is_dead = false;
@@ -754,7 +900,7 @@ impl<N: Network> Inbound<N> {
             sender_has_nonnil_zone_id = false;
         }
 
-        *zone_settled_guard = zone_settled;
+        *(self.server.write_zone_settled()) = zone_settled;
         if store_additional_address && hz_data.to_address_kind != AddressKind::Real {
             let mut found = false;
 
@@ -796,7 +942,7 @@ impl<N: Network> Inbound<N> {
             }
         }
         if member_zone_changed {
-            let mut member_clone = (*member).clone();
+            let mut member_clone = member.clone();
             let incarnation = member_clone.get_incarnation();
 
             member_clone.set_incarnation(incarnation + 1);
@@ -804,50 +950,19 @@ impl<N: Network> Inbound<N> {
         }
         if insert_member_zone {
             self.server
-                .insert_zone(Zone::new(member_zone_uuid.to_string()));
+                .insert_zone(Zone::new(member_zone_uuid.to_string(), self.server.member_id()));
         }
         if let Some(sender_zone) = maybe_sender_zone {
             self.server.insert_zone(sender_zone);
         }
         if old_zone_is_dead {
-            // it was our old zone, we need to have it in our records
-            let mut zone = self.server.read_zone_list().zones.get(&dbg_our_old_zone_id).unwrap();
+            let mut zone_change = ZoneChange::new();
 
-            // if i'm a maintainer, update the zone and send a message
-            // to the maintainer of the successor zone about the new
-            // predecessor
-            //
-            // if i'm not a maintainer, send a message to the
-            // maintainer of our old zone about a new successor
-            //
-            // the maintainer will then send a message to the other
-            // maintainer about the predecessor
-            if zone.get_maintainer_id() == member.get_id() {
-                let new_zone = zone.clone();
-                let incarnation = zone.get_incarnation();
-
-                zone.set_successor(member_zone_uuid.to_string());
-                zone.set_incarnation(incarnation + 1);
-                self.server.insert_zone(zone);
-            } else {
-
-            }
-
-            // we wouldn't get there without the sender zone
-            let sender_zone = sender_zone.clone().unwrap();
-            let member_id = sender_zone.get_maintainer_id();
-
-            self.server.member_list.with_member(member_id, |maybe_maintainer| {
-                if let Some(maintainer) = maybe_maintainer {
-                    let mut zone_change = ZoneChange::new();
-                    let mut predecessors = RepeatedField::new();
-
-                    predecessors.push(zone);
-                    zone_change.set_zone_id(member_zone_uuid.to_string());
-                    zone_change.set_new_predecessors(predecessors);
-                    outbound::zone_change(&self.server, &self.swim_sender, maintainer, zone_change);
-                }
-            });
+            // not setting the from field - it is used
+            // only for blocking the message
+            zone_change.set_zone_id(dbg_our_old_zone_id.to_string());
+            zone_change.set_new_successor(member_zone_uuid.to_string());
+            self.process_zone_change_internal(zone_change);
         }
 
         dbg_data.from_zone_id = hz_data.from_member.get_zone_id().to_string();
