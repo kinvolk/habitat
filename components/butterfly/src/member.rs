@@ -30,7 +30,7 @@ use serde::{Serialize, Serializer};
 use time::SteadyTime;
 
 use error::Error;
-use message::{self,
+use message::{BfUuid,
               swim::{Member as ProtoMember, Membership as ProtoMembership,
                      Membership_Health as ProtoMembership_Health, Rumor_Type},
               UuidSimple};
@@ -183,9 +183,9 @@ impl Member {
 impl Default for Member {
     fn default() -> Self {
         let mut proto_member = ProtoMember::new();
-        proto_member.set_id(message::generate_uuid());
+        proto_member.set_id(BfUuid::generate().to_string());
         proto_member.set_incarnation(0);
-        proto_member.set_zone_id(message::nil_uuid());
+        proto_member.set_zone_id(BfUuid::nil().to_string());
         Member {
             proto: proto_member,
         }
@@ -732,7 +732,7 @@ impl MemberList {
 mod tests {
     mod member {
         use member::Member;
-        use message::{self, swim};
+        use message::{BfUuid, swim};
 
         // Sets the uuid to simple, and the incarnation to zero.
         #[test]
@@ -746,7 +746,7 @@ mod tests {
         #[test]
         fn new_from_proto() {
             let mut proto = swim::Member::new();
-            proto.set_id(message::generate_uuid());
+            proto.set_id(BfUuid::generate().to_string());
             proto.set_incarnation(0);
             let proto2 = proto.clone();
             let member: Member = proto.into();

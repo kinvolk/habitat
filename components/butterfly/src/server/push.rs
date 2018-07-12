@@ -367,7 +367,7 @@ impl<N: Network> PushWorker<N> {
 
     /// Given a rumorkey, creates a protobuf rumor for sharing.
     fn create_zone_rumor(&self, rumor_key: &RumorKey) -> Option<ProtoRumor> {
-        let proto_zone = match self.server.read_zone_list().get(&rumor_key.id) {
+        let proto_zone = match self.server.read_zone_list().zones.get(&rumor_key.id) {
             Some(zone) => zone.proto.clone(),
             None => return None,
         };

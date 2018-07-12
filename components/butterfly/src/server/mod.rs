@@ -46,7 +46,7 @@ use serde::{Serialize, Serializer};
 
 use error::{Error, Result};
 use member::{Health, Member, MemberList};
-use message::{self, UuidSimple};
+use message::{self, BfUuid, UuidSimple};
 use network::{AddressAndPort, Network};
 use rumor::dat_file::DatFile;
 use rumor::departure::Departure;
@@ -456,7 +456,7 @@ impl<N: Network> Server<N> {
     pub fn set_departed(&self) {
         if self.swim_sender.is_some() {
             let member = {
-                let mut me = self.member.write().expect("Member lock is poisoned");
+                let mut me = self.write_member();
                 let mut incarnation = me.get_incarnation();
                 incarnation += 1;
                 me.set_incarnation(incarnation);
@@ -523,7 +523,7 @@ impl<N: Network> Server<N> {
         let rk: RumorKey = RumorKey::from(&member);
         if member.get_id() == self.member_id() {
             if health != Health::Alive {
-                let mut me = self.member.write().expect("Member lock is poisoned");
+                let mut me = self.write_member();
                 let mut incarnation = me.get_incarnation();
                 incarnation += 1;
                 me.set_incarnation(incarnation);
@@ -1032,7 +1032,7 @@ impl<N: Network> Server<N> {
                 .get_zone_id()
                 .to_owned()
         } else {
-            message::nil_uuid()
+            BfUuid::nil().to_string()
         }
     }
 

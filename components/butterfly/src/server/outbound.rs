@@ -26,7 +26,7 @@ use protobuf::{Message, RepeatedField};
 use time::SteadyTime;
 
 use member::{Health, Member};
-use message::swim::{Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type};
+use message::swim::{Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type, ZoneChange};
 use network::{AddressAndPort, Network, SwimSender};
 use rumor::RumorKey;
 use server::timing::Timing;
@@ -171,12 +171,12 @@ impl<N: Network> Outbound<N> {
             }
         }
 
-        if let Some(zone) = self.server.read_zone_list().zones.get(&their_zone_id) {
+        if let Some(zone) = self.server.read_zone_list().zones.get(their_zone_id) {
             if zone.get_successor() == our_zone_id {
                 return true;
             }
             for zone_id in zone.get_predecessors().iter() {
-                if zone_id == our_zone_id {
+                if *zone_id == our_zone_id {
                     return true;
                 }
             }
@@ -189,12 +189,12 @@ impl<N: Network> Outbound<N> {
                 return true;
             }
 
-            if let Some(zone) = self.server.read_zone_list().zones.get(&additional_zone_id) {
+            if let Some(zone) = self.server.read_zone_list().zones.get(additional_zone_id) {
                 if zone.get_successor() == our_zone_id {
                     return true;
                 }
                 for zone_id in zone.get_predecessors().iter() {
-                    if zone_id == our_zone_id {
+                    if *zone_id == our_zone_id {
                         return true;
                     }
                 }
@@ -208,7 +208,7 @@ impl<N: Network> Outbound<N> {
                 return true;
             }
 
-            if let Some(zone) = self.server.read_zone_list().zones.get(&additional_zone_id) {
+            if let Some(zone) = self.server.read_zone_list().zones.get(additional_zone_id) {
                 if zone.get_successor() == their_zone_id {
                     return true;
                 }
@@ -240,7 +240,11 @@ impl<N: Network> Outbound<N> {
     ///
     /// If we don't receive anything at all in the Ping/PingReq loop, we mark the member as Suspect.
     fn probe(&mut self, member: Member) {
-        let addr = member.swim_socket_address_for_zone(self.server.read_member().get_zone_id());
+        let addr = if let Some(addr) = member.swim_socket_address_for_zone(self.server.read_member().get_zone_id()) {
+            addr
+        } else {
+            member.swim_socket_address()
+        };
 
         trace_it!(PROBE: &self.server, TraceKind::ProbeBegin, member.get_id(), addr);
 
@@ -399,7 +403,7 @@ pub fn populate_membership_rumors<N: Network>(
     // Always include zone information of the sender
     let zone_settled = *(server.read_zone_settled());
     if zone_settled && !our_own_zone_gossiped {
-        if let Some(zone) = server.read_zone_list().get(&server.get_settled_zone_id()) {
+        if let Some(zone) = server.read_zone_list().zones.get(&server.get_settled_zone_id()) {
             zone_entries.push(zone.proto.clone());
         }
     }
@@ -663,7 +667,7 @@ pub fn zone_change<N: Network>(
             return;
         }
     };
-    let addr = target.get_swim_socket_address();
+    let addr = target.swim_socket_address();
 
     match swim_sender.send(&payload, addr) {
         Ok(_s) => trace!(
