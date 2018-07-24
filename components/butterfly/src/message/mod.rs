@@ -77,10 +77,10 @@ impl Display for BfUuid {
 impl FromStr for BfUuid {
     type Err = ParseError;
 
-    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        Self {
+    fn from_str(s: &str) -> result::Result<Self, Self::Err> {
+        Ok(Self {
             uuid: s.parse()?,
-        }
+        })
     }
 }
 

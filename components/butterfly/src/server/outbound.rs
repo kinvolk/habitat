@@ -16,6 +16,7 @@
 //!
 //! This module handles the implementation of the swim probe protocol.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
@@ -32,6 +33,17 @@ use rumor::RumorKey;
 use server::timing::Timing;
 use server::Server;
 use trace::TraceKind;
+use zone::Zone;
+
+#[derive(Debug, Default)]
+struct ReachableDbg {
+    our_member: Member,
+    their_member: Member,
+    our_zone: Option<Zone>,
+    their_zone: Option<Zone>,
+    our_ids: Option<HashSet<String>>,
+    their_ids: Option<HashSet<String>>,
+}
 
 /// How long to sleep between calls to `recv`.
 const PING_RECV_QUEUE_EMPTY_SLEEP_MS: u64 = 10;
@@ -119,10 +131,7 @@ impl<N: Network> Outbound<N> {
 
             for member in check_list {
                 if self.server.member_list.pingable(&member) {
-                    let reachable = self.directly_reachable(&member);
-
-                    println!("is member {:#?} directly reachable from {:#?}: {}", member, *self.server.read_member(), reachable);
-                    if !reachable{
+                    if !self.directly_reachable(&member) {
                         continue;
                     }
                     // This is the timeout for the next protocol period - if we
@@ -153,6 +162,27 @@ impl<N: Network> Outbound<N> {
     }
 
     fn directly_reachable(&self, member: &Member) -> bool {
+        let mut dbg = ReachableDbg::default();
+        let reachable = self.directly_reachable_internal(member, &mut dbg);
+
+        println!(
+            "====REACHABLE====\n\
+             reachable: {}\n\
+             {:#?}\n\
+             =================",
+            reachable,
+            dbg,
+        );
+
+        reachable
+    }
+
+    fn directly_reachable_internal(&self, member: &Member, dbg: &mut ReachableDbg) -> bool {
+        dbg.our_member = self.server.read_member().clone();
+        dbg.their_member = member.clone();
+        dbg.our_zone = self.server.read_zone_list().zones.get(dbg.our_member.get_zone_id()).cloned();
+        dbg.their_zone = self.server.read_zone_list().zones.get(dbg.their_member.get_zone_id()).cloned();
+
         let our_zone_id = self.server.read_member().get_zone_id().to_string();
         let their_zone_id = member.get_zone_id();
 
@@ -160,26 +190,37 @@ impl<N: Network> Outbound<N> {
             return true;
         }
 
+        let mut our_ids = HashSet::new();
+        let mut their_ids = HashSet::new();
+
+        our_ids.insert(our_zone_id.to_string());
+        their_ids.insert(their_zone_id.to_string());
+
         if let Some(zone) = self.server.read_zone_list().zones.get(&our_zone_id) {
-            if zone.get_successor() == their_zone_id {
-                return true;
+            if zone.has_successor() {
+                our_ids.insert(zone.get_successor().to_string());
             }
             for zone_id in zone.get_predecessors().iter() {
-                if zone_id == their_zone_id {
-                    return true;
-                }
+                our_ids.insert(zone_id.to_string());
             }
         }
 
         if let Some(zone) = self.server.read_zone_list().zones.get(their_zone_id) {
-            if zone.get_successor() == our_zone_id {
-                return true;
+            if zone.has_successor() {
+                their_ids.insert(zone.get_successor().to_string());
             }
             for zone_id in zone.get_predecessors().iter() {
-                if *zone_id == our_zone_id {
-                    return true;
-                }
+                their_ids.insert(zone_id.to_string());
             }
+        }
+
+        let have_common_ids = !our_ids.is_disjoint(&their_ids);
+
+        dbg.our_ids = Some(our_ids);
+        dbg.their_ids = Some(their_ids);
+
+        if have_common_ids {
+            return true;
         }
 
         for zone_address in member.get_additional_addresses() {

@@ -24,6 +24,7 @@ mod inbound;
 mod outbound;
 mod pull;
 mod push;
+mod zones;
 pub mod timing;
 
 use std::collections::HashSet;
@@ -402,9 +403,23 @@ impl<N: Network> Server<N> {
     }
 
     pub fn insert_zone(&self, zone: Zone) {
-        let rk = RumorKey::from(&zone);
-        if self.write_zone_list().insert(zone) {
-            // TODO: tracing
+        // TODO(krnowak): if this is our zone and it has the
+        // dead_in_favor_of field set, then figure out the successor
+        // and update the member accordingly, see
+        // insert_member_from_rumor
+        // NOTE: This sucks so much right here. Check out how we allocate no matter what, because
+        // of just how the logic goes. The value of the trace is really high, though, so we suck it
+        // for now.
+        let trace_zone_id = String::from(zone.get_id());
+        let trace_incarnation = zone.get_incarnation();
+
+        for rk in self.write_zone_list().insert(zone) {
+            trace_it!(
+                ZONES: self,
+                TraceKind::ZoneUpdate,
+                trace_zone_id,
+                trace_incarnation
+            );
             self.rumor_heat.start_hot_rumor(rk);
         }
     }
@@ -494,6 +509,8 @@ impl<N: Network> Server<N> {
 
     /// Given a membership record and some health, insert it into the Member List.
     fn insert_zone_from_rumor(&self, zone: Zone) {
+        self.insert_zone(zone);
+        /*
         let rk: RumorKey = RumorKey::from(&zone);
 
         // TODO(krnowak): if this is our zone and it has the
@@ -515,6 +532,7 @@ impl<N: Network> Server<N> {
             );
             self.rumor_heat.start_hot_rumor(rk);
         }
+*/
     }
 
     /// Given a membership record and some health, insert it into the Member List.
