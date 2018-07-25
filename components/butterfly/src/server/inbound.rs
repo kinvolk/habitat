@@ -27,10 +27,18 @@ use protobuf::{self, RepeatedField};
 
 use error::Error;
 use member::{Health, Member};
-use message::{BfUuid,
-              swim::{Member as ProtoMember, Swim, Swim_Type, Zone as ProtoZone, ZoneChange}};
+use message::{
+    swim::{Member as ProtoMember, Swim, Swim_Type, Zone as ProtoZone, ZoneChange}, BfUuid,
+};
 use network::{AddressAndPort, MyFromStr, Network, SwimReceiver};
-use server::{outbound, Server, zones::{self, HandleZoneResults, ZoneChangeDbgData, ZoneChangeResultsMsgOrNothing, AddressKind, HandleZoneDbgData, HandleZoneResultsStuff, HandleZoneData}};
+use server::{
+    outbound,
+    zones::{
+        self, AddressKind, HandleZoneData, HandleZoneDbgData, HandleZoneResults,
+        HandleZoneResultsStuff, ZoneChangeDbgData, ZoneChangeResultsMsgOrNothing,
+    },
+    Server,
+};
 use trace::TraceKind;
 use zone::Zone;
 
@@ -101,7 +109,11 @@ impl<N: Network> Inbound<N> {
                                     "Not processing message from {} - it is blocked",
                                     msg.get_ping().get_from().get_id()
                                 );
-                                self.dbg(format!("Dropped ping from {}@{}", msg.get_ping().get_from().get_id(), addr));
+                                self.dbg(format!(
+                                    "Dropped ping from {}@{}",
+                                    msg.get_ping().get_from().get_id(),
+                                    addr
+                                ));
                                 continue;
                             }
                             self.dbg("ping start");
@@ -117,7 +129,11 @@ impl<N: Network> Inbound<N> {
                                     "Not processing message from {} - it is blocked",
                                     msg.get_ack().get_from().get_id()
                                 );
-                                self.dbg(format!("Dropped ack from {}@{}", msg.get_ack().get_from().get_id(), addr));
+                                self.dbg(format!(
+                                    "Dropped ack from {}@{}",
+                                    msg.get_ack().get_from().get_id(),
+                                    addr
+                                ));
                                 continue;
                             }
                             self.dbg("ack start");
@@ -132,7 +148,11 @@ impl<N: Network> Inbound<N> {
                                     "Not processing message from {} - it is blocked",
                                     msg.get_pingreq().get_from().get_id()
                                 );
-                                self.dbg(format!("Dropped pingreq from {}@{}", msg.get_pingreq().get_from().get_id(), addr));
+                                self.dbg(format!(
+                                    "Dropped pingreq from {}@{}",
+                                    msg.get_pingreq().get_from().get_id(),
+                                    addr
+                                ));
                                 continue;
                             }
                             self.dbg("pingreq start");
@@ -147,7 +167,11 @@ impl<N: Network> Inbound<N> {
                                     "Not processing message from {} - it is blocked",
                                     msg.get_zone_change().get_from().get_id()
                                 );
-                                self.dbg(format!("Dropped zone change from {}@{}", msg.get_zone_change().get_from().get_id(), addr));
+                                self.dbg(format!(
+                                    "Dropped zone change from {}@{}",
+                                    msg.get_zone_change().get_from().get_id(),
+                                    addr
+                                ));
                                 continue;
                             }
                             self.dbg("zone change start");
@@ -208,14 +232,25 @@ impl<N: Network> Inbound<N> {
         });
     }
 
-    fn parse_addr(addr_str: &str) -> Result<<<N as Network>::AddressAndPort as AddressAndPort>::Address, <<<N as Network>::AddressAndPort as AddressAndPort>::Address as MyFromStr>::MyErr> {
+    fn parse_addr(
+        addr_str: &str,
+    ) -> Result<
+        <<N as Network>::AddressAndPort as AddressAndPort>::Address,
+        <<<N as Network>::AddressAndPort as AddressAndPort>::Address as MyFromStr>::MyErr,
+    > {
         <<N as Network>::AddressAndPort as AddressAndPort>::Address::create_from_str(addr_str)
     }
 
     /// Process ack messages; forwards to the outbound thread.
     fn process_ack(&self, addr: N::AddressAndPort, mut msg: Swim) {
         let mut send_ack = false;
-        match self.handle_zone_for_recipient(msg.get_zones(), msg.get_field_type(), msg.get_ack().get_from(), msg.get_ack().get_to(), addr) {
+        match self.handle_zone_for_recipient(
+            msg.get_zones(),
+            msg.get_field_type(),
+            msg.get_ack().get_from(),
+            msg.get_ack().get_to(),
+            addr,
+        ) {
             HandleZoneResults::Nothing => (),
             HandleZoneResults::UnknownSenderAddress => {
                 warn!(
@@ -244,7 +279,8 @@ impl<N: Network> Inbound<N> {
                     let mut zone_list = self.server.write_zone_list();
                     zone_list.maintained_zone_id = Some(zone_id);
                 }
-                let member_changed = stuff.zone_uuid_for_our_member.is_some() || stuff.additional_address_for_our_member.is_some();
+                let member_changed = stuff.zone_uuid_for_our_member.is_some()
+                    || stuff.additional_address_for_our_member.is_some();
                 if member_changed {
                     let our_member_clone = {
                         let mut our_member = self.server.write_member();
@@ -281,7 +317,8 @@ impl<N: Network> Inbound<N> {
                 }
             }
             HandleZoneResults::ZoneProcessed(mut results) => {
-                let zone_changed = results.successor_for_maintained_zone.is_some() || !results.predecessors_to_add_to_maintained_zone.is_empty();
+                let zone_changed = results.successor_for_maintained_zone.is_some()
+                    || !results.predecessors_to_add_to_maintained_zone.is_empty();
                 let mut maintained_zone = Zone::default();
 
                 mem::swap(&mut maintained_zone, &mut results.original_maintained_zone);
@@ -324,12 +361,14 @@ impl<N: Network> Inbound<N> {
                     let mut zone_ids_and_maintainer_ids = {
                         let zone_list = self.server.read_zone_list();
 
-                        results.aliases_to_inform
+                        results
+                            .aliases_to_inform
                             .iter()
                             .filter_map(|uuid| {
                                 let zone_id = uuid.to_string();
 
-                                zone_list.zones
+                                zone_list
+                                    .zones
                                     .get(&zone_id)
                                     .map(|zone| (zone_id, zone.get_maintainer_id().to_string()))
                             })
@@ -342,19 +381,25 @@ impl<N: Network> Inbound<N> {
                         let mut msgs_and_targets = &mut msgs_and_targets;
                         let mut zone_ids_and_maintainer_ids = &mut zone_ids_and_maintainer_ids;
 
-                        self.server.member_list.with_member_list(move |members_map| {
-                            for (zone_id, maintainer_id) in zone_ids_and_maintainer_ids.drain(..) {
-                                if let Some(maintainer) = members_map.get(&maintainer_id) {
-                                    let mut zone_change = ZoneChange::new();
-                                    //let addr: N::AddressAndPort = maintainer.swim_socket_address();
+                        self.server
+                            .member_list
+                            .with_member_list(move |members_map| {
+                                for (zone_id, maintainer_id) in
+                                    zone_ids_and_maintainer_ids.drain(..)
+                                {
+                                    if let Some(maintainer) = members_map.get(&maintainer_id) {
+                                        let mut zone_change = ZoneChange::new();
+                                        //let addr: N::AddressAndPort = maintainer.swim_socket_address();
 
-                                    //dbg_sent_zone_change_with_alias_to.push((maintainer_id, addr.to_string()));
-                                    zone_change.set_zone_id(zone_id);
-                                    zone_change.set_new_aliases(RepeatedField::from_vec(vec![maintained_zone.proto.clone()]));
-                                    msgs_and_targets.push((zone_change, maintainer.clone()));
+                                        //dbg_sent_zone_change_with_alias_to.push((maintainer_id, addr.to_string()));
+                                        zone_change.set_zone_id(zone_id);
+                                        zone_change.set_new_aliases(RepeatedField::from_vec(vec![
+                                            maintained_zone.proto.clone(),
+                                        ]));
+                                        msgs_and_targets.push((zone_change, maintainer.clone()));
+                                    }
                                 }
-                            }
-                        });
+                            });
                     }
 
                     for (msg, target) in msgs_and_targets {
@@ -381,18 +426,22 @@ impl<N: Network> Inbound<N> {
         trace!("Ack from {}@{}", msg.get_ack().get_from().get_id(), addr);
         if msg.get_ack().has_forward_to() {
             if self.server.member_id() != msg.get_ack().get_forward_to().get_id() {
-                let forward_addr = match Self::parse_addr(msg.get_ack().get_forward_to().get_address()) {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        error!(
-                            "Abandoning Ack forward: cannot parse member address {}: {}",
-                            msg.get_ack().get_forward_to().get_address(),
-                            e
-                        );
-                        return;
-                    }
-                };
-                let forward_to_addr = N::AddressAndPort::new_from_address_and_port(forward_addr, msg.get_ack().get_forward_to().get_swim_port() as u16);
+                let forward_addr =
+                    match Self::parse_addr(msg.get_ack().get_forward_to().get_address()) {
+                        Ok(addr) => addr,
+                        Err(e) => {
+                            error!(
+                                "Abandoning Ack forward: cannot parse member address {}: {}",
+                                msg.get_ack().get_forward_to().get_address(),
+                                e
+                            );
+                            return;
+                        }
+                    };
+                let forward_to_addr = N::AddressAndPort::new_from_address_and_port(
+                    forward_addr,
+                    msg.get_ack().get_forward_to().get_swim_port() as u16,
+                );
                 trace!(
                     "Forwarding Ack from {}@{} to {}@{}",
                     msg.get_ack().get_from().get_id(),
@@ -414,10 +463,7 @@ impl<N: Network> Inbound<N> {
                 .collect();
             membership
         };
-        let zones = msg.take_zones()
-            .iter()
-            .map(|z| Zone::from(z))
-            .collect();
+        let zones = msg.take_zones().iter().map(|z| Zone::from(z)).collect();
         match self.tx_outbound.send((addr, msg)) {
             Ok(()) => {}
             Err(e) => panic!("Outbound thread has died - this shouldn't happen: #{:?}", e),
@@ -429,7 +475,13 @@ impl<N: Network> Inbound<N> {
     /// Process ping messages.
     fn process_ping(&self, addr: N::AddressAndPort, mut msg: Swim) {
         let mut insert_pinger = true;
-        match self.handle_zone_for_recipient(msg.get_zones(), msg.get_field_type(), msg.get_ping().get_from(), msg.get_ping().get_to(), addr) {
+        match self.handle_zone_for_recipient(
+            msg.get_zones(),
+            msg.get_field_type(),
+            msg.get_ping().get_from(),
+            msg.get_ping().get_to(),
+            addr,
+        ) {
             HandleZoneResults::Nothing => (),
             HandleZoneResults::UnknownSenderAddress => {
                 warn!(
@@ -453,7 +505,8 @@ impl<N: Network> Inbound<N> {
                     let mut zone_list = self.server.write_zone_list();
                     zone_list.maintained_zone_id = Some(zone_id);
                 }
-                let member_changed = stuff.zone_uuid_for_our_member.is_some() || stuff.additional_address_for_our_member.is_some();
+                let member_changed = stuff.zone_uuid_for_our_member.is_some()
+                    || stuff.additional_address_for_our_member.is_some();
                 if member_changed {
                     let our_member_clone = {
                         let mut our_member = self.server.write_member();
@@ -490,7 +543,8 @@ impl<N: Network> Inbound<N> {
                 }
             }
             HandleZoneResults::ZoneProcessed(mut results) => {
-                let zone_changed = results.successor_for_maintained_zone.is_some() || !results.predecessors_to_add_to_maintained_zone.is_empty();
+                let zone_changed = results.successor_for_maintained_zone.is_some()
+                    || !results.predecessors_to_add_to_maintained_zone.is_empty();
                 let mut maintained_zone = Zone::default();
 
                 mem::swap(&mut maintained_zone, &mut results.original_maintained_zone);
@@ -531,12 +585,14 @@ impl<N: Network> Inbound<N> {
                     let mut zone_ids_and_maintainer_ids = {
                         let zone_list = self.server.read_zone_list();
 
-                        results.aliases_to_inform
+                        results
+                            .aliases_to_inform
                             .iter()
                             .filter_map(|uuid| {
                                 let zone_id = uuid.to_string();
 
-                                zone_list.zones
+                                zone_list
+                                    .zones
                                     .get(&zone_id)
                                     .map(|zone| (zone_id, zone.get_maintainer_id().to_string()))
                             })
@@ -557,7 +613,9 @@ impl<N: Network> Inbound<N> {
 
                                     //dbg_sent_zone_change_with_alias_to.push((maintainer_id, addr.to_string()));
                                     zone_change.set_zone_id(zone_id);
-                                    zone_change.set_new_aliases(RepeatedField::from_vec(vec![maintained_zone.proto.clone()]));
+                                    zone_change.set_new_aliases(RepeatedField::from_vec(vec![
+                                        maintained_zone.proto.clone(),
+                                    ]));
                                     msgs_and_targets.push((zone_change, maintainer.clone()));
                                 }
                             }
@@ -607,10 +665,7 @@ impl<N: Network> Inbound<N> {
                 .map(|m| (Member::from(m.get_member()), Health::from(m.get_health())))
                 .collect();
             self.server.insert_member_from_rumors(membership);
-            let zones = msg.take_zones()
-                .iter()
-                .map(|z| Zone::from(z))
-                .collect();
+            let zones = msg.take_zones().iter().map(|z| Zone::from(z)).collect();
             self.server.insert_zones_from_rumors(zones);
         }
     }
@@ -622,13 +677,15 @@ impl<N: Network> Inbound<N> {
                   msg.get_zone_change().get_from().get_id(),
                   addr,
                   &msg);
-        trace!("Zone change from {}@{}", msg.get_zone_change().get_from().get_id(), addr);
+        trace!(
+            "Zone change from {}@{}",
+            msg.get_zone_change().get_from().get_id(),
+            addr
+        );
 
         let mut dbg_data = ZoneChangeDbgData::default();
-        let results_msg_or_nothing = self.process_zone_change_internal(
-            msg.take_zone_change(),
-            &mut dbg_data
-        );
+        let results_msg_or_nothing =
+            self.process_zone_change_internal(msg.take_zone_change(), &mut dbg_data);
 
         match results_msg_or_nothing {
             ZoneChangeResultsMsgOrNothing::Nothing => (),
@@ -636,7 +693,8 @@ impl<N: Network> Inbound<N> {
                 outbound::zone_change(&self.server, &self.swim_sender, &target, zone_change);
             }
             ZoneChangeResultsMsgOrNothing::Results(mut results) => {
-                let zone_changed = results.successor_for_maintained_zone.is_some() || !results.predecessors_to_add_to_maintained_zone.is_empty();
+                let zone_changed = results.successor_for_maintained_zone.is_some()
+                    || !results.predecessors_to_add_to_maintained_zone.is_empty();
                 let mut maintained_zone = Zone::default();
 
                 mem::swap(&mut maintained_zone, &mut results.original_maintained_zone);
@@ -677,12 +735,14 @@ impl<N: Network> Inbound<N> {
                     let mut zone_ids_and_maintainer_ids = {
                         let zone_list = self.server.read_zone_list();
 
-                        results.aliases_to_inform
+                        results
+                            .aliases_to_inform
                             .iter()
                             .filter_map(|uuid| {
                                 let zone_id = uuid.to_string();
 
-                                zone_list.zones
+                                zone_list
+                                    .zones
                                     .get(&zone_id)
                                     .map(|zone| (zone_id, zone.get_maintainer_id().to_string()))
                             })
@@ -701,9 +761,12 @@ impl<N: Network> Inbound<N> {
                                     let mut zone_change = ZoneChange::new();
                                     let addr: N::AddressAndPort = maintainer.swim_socket_address();
 
-                                    dbg_sent_zone_change_with_alias_to.push((maintainer_id, addr.to_string()));
+                                    dbg_sent_zone_change_with_alias_to
+                                        .push((maintainer_id, addr.to_string()));
                                     zone_change.set_zone_id(zone_id);
-                                    zone_change.set_new_aliases(RepeatedField::from_vec(vec![maintained_zone.proto.clone()]));
+                                    zone_change.set_new_aliases(RepeatedField::from_vec(vec![
+                                        maintained_zone.proto.clone(),
+                                    ]));
                                     msgs_and_targets.push((zone_change, maintainer.clone()));
                                 }
                             }
@@ -735,7 +798,11 @@ impl<N: Network> Inbound<N> {
         );
     }
 
-    fn process_zone_change_internal(&self, zone_change: ZoneChange, dbg_data: &mut ZoneChangeDbgData) -> ZoneChangeResultsMsgOrNothing {
+    fn process_zone_change_internal(
+        &self,
+        zone_change: ZoneChange,
+        dbg_data: &mut ZoneChangeDbgData,
+    ) -> ZoneChangeResultsMsgOrNothing {
         // meh…
         enum YaddaYadda {
             MaintainedZone(Zone),
@@ -749,7 +816,8 @@ impl<N: Network> Inbound<N> {
             dbg_data.zone_found = maybe_maintained_zone.is_some();
 
             if let Some(maintained_zone) = maybe_maintained_zone {
-                let im_a_maintainer = maintained_zone.get_maintainer_id() == self.server.member_id();
+                let im_a_maintainer =
+                    maintained_zone.get_maintainer_id() == self.server.member_id();
 
                 dbg_data.is_a_maintainer = Some(im_a_maintainer);
 
@@ -768,16 +836,19 @@ impl<N: Network> Inbound<N> {
                 YaddaYadda::MaintainerID(id) => {
                     let mut maybe_maintainer_clone = None;
 
-                    self.server.member_list.with_member(&id, |maybe_maintainer| {
-                        maybe_maintainer_clone = maybe_maintainer.cloned()
-                    });
+                    self.server
+                        .member_list
+                        .with_member(&id, |maybe_maintainer| {
+                            maybe_maintainer_clone = maybe_maintainer.cloned()
+                        });
 
                     dbg_data.real_maintainer_found = Some(maybe_maintainer_clone.is_some());
 
                     if let Some(maintainer_clone) = maybe_maintainer_clone {
                         let addr: N::AddressAndPort = maintainer_clone.swim_socket_address();
 
-                        dbg_data.forwarded_to = Some((maintainer_clone.get_id().to_string(), addr.to_string()));
+                        dbg_data.forwarded_to =
+                            Some((maintainer_clone.get_id().to_string(), addr.to_string()));
 
                         return ZoneChangeResultsMsgOrNothing::Msg((zone_change, maintainer_clone));
                     }
@@ -794,22 +865,29 @@ impl<N: Network> Inbound<N> {
             .map(|z| z.proto.clone());
         let our_member_uuid = BfUuid::must_parse(self.server.read_member().get_zone_id());
 
-        ZoneChangeResultsMsgOrNothing::Results(
-            zones::process_zone_change_internal_state(
-                maintained_zone_clone,
-                maybe_successor_clone,
-                our_member_uuid,
-                zone_change,
-                dbg_data,
-            )
-        )
+        ZoneChangeResultsMsgOrNothing::Results(zones::process_zone_change_internal_state(
+            maintained_zone_clone,
+            maybe_successor_clone,
+            our_member_uuid,
+            zone_change,
+            dbg_data,
+        ))
     }
 
-    fn address_kind(addr: <<N as Network>::AddressAndPort as AddressAndPort>::Address, member: &ProtoMember, dbg_data: &mut HandleZoneDbgData) -> AddressKind {
+    fn address_kind(
+        addr: <<N as Network>::AddressAndPort as AddressAndPort>::Address,
+        member: &ProtoMember,
+        dbg_data: &mut HandleZoneDbgData,
+    ) -> AddressKind {
         let member_real_address = match Self::parse_addr(member.get_address()) {
             Ok(addr) => addr,
             Err(e) => {
-                let msg = format!("Error parsing member {:?} address {}: {}", member, member.get_address(), e);
+                let msg = format!(
+                    "Error parsing member {:?} address {}: {}",
+                    member,
+                    member.get_address(),
+                    e
+                );
                 error!("{}", msg);
                 dbg_data.parse_failures.push(msg);
                 return AddressKind::Unknown;
@@ -824,7 +902,12 @@ impl<N: Network> Inbound<N> {
             let member_additional_address = match Self::parse_addr(zone_address.get_address()) {
                 Ok(addr) => addr,
                 Err(e) => {
-                    let msg = format!("Error parsing member {:?} additional address {}: {}", member, member.get_address(), e);
+                    let msg = format!(
+                        "Error parsing member {:?} additional address {}: {}",
+                        member,
+                        member.get_address(),
+                        e
+                    );
                     error!("{}", msg);
                     dbg_data.parse_failures.push(msg);
                     return AddressKind::Unknown;
@@ -839,7 +922,11 @@ impl<N: Network> Inbound<N> {
         AddressKind::Unknown
     }
 
-    fn address_kind_from_str(addr: &str, member: &ProtoMember, dbg_data: &mut HandleZoneDbgData) -> AddressKind {
+    fn address_kind_from_str(
+        addr: &str,
+        member: &ProtoMember,
+        dbg_data: &mut HandleZoneDbgData,
+    ) -> AddressKind {
         let real_address = match Self::parse_addr(addr) {
             Ok(addr) => addr,
             Err(e) => {
@@ -857,12 +944,16 @@ impl<N: Network> Inbound<N> {
         swim_type: Swim_Type,
         from: &ProtoMember,
         to: &ProtoMember,
-        addr: N::AddressAndPort
+        addr: N::AddressAndPort,
     ) -> HandleZoneResults {
         //self.dbg("handle_zone_for_recipient");
         let mut dbg_data = HandleZoneDbgData::default();
         let from_address_kind = Self::address_kind(addr.get_address(), from, &mut dbg_data);
-        let to_address_kind = Self::address_kind_from_str(to.get_address(), &self.server.read_member(), &mut dbg_data);
+        let to_address_kind = Self::address_kind_from_str(
+            to.get_address(),
+            &self.server.read_member(),
+            &mut dbg_data,
+        );
 
         dbg_data.from_kind = from_address_kind;
         dbg_data.to_kind = to_address_kind;
@@ -975,19 +1066,20 @@ impl<N: Network> Inbound<N> {
             self.handle_zone(handle_zone_data, &mut dbg_data)
         };
         dbg_data.handle_zone_results = handle_zone_results.clone();
-        println!("=========={:?}==========\n\
-                  dbg:\n\
-                  \n\
-                  {:#?}\n\
-                  \n\
-                  member us: {:#?}\n\
-                  member from: {:#?}\n\
-                  \n\
-                  =====================",
-                 swim_type,
-                 dbg_data,
-                 self.server.read_member().proto,
-                 from,
+        println!(
+            "=========={:?}==========\n\
+             dbg:\n\
+             \n\
+             {:#?}\n\
+             \n\
+             member us: {:#?}\n\
+             member from: {:#?}\n\
+             \n\
+             =====================",
+            swim_type,
+            dbg_data,
+            self.server.read_member().proto,
+            from,
         );
         //self.dbg("end handle_zone_for_recipient");
         handle_zone_results
@@ -996,7 +1088,7 @@ impl<N: Network> Inbound<N> {
     fn handle_zone(
         &self,
         hz_data: HandleZoneData<N>,
-        dbg_data: &mut HandleZoneDbgData
+        dbg_data: &mut HandleZoneDbgData,
     ) -> HandleZoneResults {
         //self.dbg("handle_zone");
         // scenarios:
@@ -1071,17 +1163,24 @@ impl<N: Network> Inbound<N> {
         //   enlighten the sender about newer and better zone
         // - use Self::process_zone_change_internal_statei
         let maybe_not_nil_sender_zone_and_uuid = {
-            if let Some(zone) = Self::get_zone_from_protozones(hz_data.zones, hz_data.from_member.get_zone_id()) {
+            if let Some(zone) =
+                Self::get_zone_from_protozones(hz_data.zones, hz_data.from_member.get_zone_id())
+            {
                 let zone_uuid = match zone.get_id().parse::<BfUuid>() {
                     Ok(uuid) => {
                         if uuid.is_nil() {
-                            dbg_data.sender_zone_warning = Some("Got a zone with a nil UUID, ignoring it".to_string());
+                            dbg_data.sender_zone_warning =
+                                Some("Got a zone with a nil UUID, ignoring it".to_string());
                             warn!("Got a zone with a nil UUID, ignoring it");
                         }
                         uuid
                     }
                     Err(e) => {
-                        dbg_data.sender_zone_warning = Some(format!("Got a zone with an invalid UUID {}, falling back to nil: {}", zone.get_id(), e));
+                        dbg_data.sender_zone_warning = Some(format!(
+                            "Got a zone with an invalid UUID {}, falling back to nil: {}",
+                            zone.get_id(),
+                            e
+                        ));
                         warn!(
                             "Got a zone with an invalid UUID {}, falling back to nil: {}",
                             zone.get_id(),
@@ -1099,18 +1198,21 @@ impl<N: Network> Inbound<N> {
                 match hz_data.from_member.get_zone_id().parse::<BfUuid>() {
                     Ok(uuid) => {
                         if !uuid.is_nil() {
-                            dbg_data.sender_zone_warning = Some(format!("Got no zone info for {}", uuid));
-                            warn!(
-                                "Got no zone info for {}",
-                                uuid,
-                            );
+                            dbg_data.sender_zone_warning =
+                                Some(format!("Got no zone info for {}", uuid));
+                            warn!("Got no zone info for {}", uuid,);
                         }
                     }
                     Err(e) => {
-                        dbg_data.sender_zone_warning = Some(format!("Got no zone info for invalid uuid {}: {}", hz_data.from_member.get_zone_id(), e));
+                        dbg_data.sender_zone_warning = Some(format!(
+                            "Got no zone info for invalid uuid {}: {}",
+                            hz_data.from_member.get_zone_id(),
+                            e
+                        ));
                         warn!(
                             "Got no zone info for invalid uuid {}: {}",
-                            hz_data.from_member.get_zone_id(), e
+                            hz_data.from_member.get_zone_id(),
+                            e
                         );
                     }
                 }
@@ -1120,13 +1222,19 @@ impl<N: Network> Inbound<N> {
         let zone_settled = *(self.server.read_zone_settled());
         let same_private_network = hz_data.sender_in_the_same_zone_as_us;
         let our_member_clone = self.server.read_member().clone();
-        let (maybe_maintained_zone_clone, maybe_successor_of_maintained_zone_clone, maybe_our_zone_clone) = {
+        let (
+            maybe_maintained_zone_clone,
+            maybe_successor_of_maintained_zone_clone,
+            maybe_our_zone_clone,
+        ) = {
             let zone_list = self.server.read_zone_list();
             let maybe_our_zone_clone = zone_list.zones.get(our_member_clone.get_zone_id()).cloned();
             let zone_pair = if let &Some(ref maintained_zone_id) = &zone_list.maintained_zone_id {
                 if let Some(maintained_zone) = zone_list.zones.get(maintained_zone_id) {
                     if maintained_zone.has_successor() {
-                        if let Some(successor) = zone_list.zones.get(maintained_zone.get_successor()) {
+                        if let Some(successor) =
+                            zone_list.zones.get(maintained_zone.get_successor())
+                        {
                             (Some(maintained_zone.clone()), Some(successor.proto.clone()))
                         } else {
                             warn!(
@@ -1153,12 +1261,16 @@ impl<N: Network> Inbound<N> {
 
             (zone_pair.0, zone_pair.1, maybe_our_zone_clone)
         };
-        let maybe_our_zone_maintainer_clone = if let Some(ref our_zone_clone) = maybe_our_zone_clone {
+        let maybe_our_zone_maintainer_clone = if let Some(ref our_zone_clone) = maybe_our_zone_clone
+        {
             let mut maybe_member = None;
 
-            self.server.member_list.with_member(our_zone_clone.get_maintainer_id(), |maybe_maintainer| {
-                maybe_member = maybe_maintainer.cloned();
-            });
+            self.server.member_list.with_member(
+                our_zone_clone.get_maintainer_id(),
+                |maybe_maintainer| {
+                    maybe_member = maybe_maintainer.cloned();
+                },
+            );
 
             maybe_member
         } else {
@@ -1168,7 +1280,11 @@ impl<N: Network> Inbound<N> {
         dbg_data.was_settled = zone_settled;
         dbg_data.our_old_zone_id = our_member_clone.get_zone_id().to_string();
 
-        let results = match (maybe_not_nil_sender_zone_and_uuid, zone_settled, same_private_network) {
+        let results = match (
+            maybe_not_nil_sender_zone_and_uuid,
+            zone_settled,
+            same_private_network,
+        ) {
             // 0aa.
             (None, false, true) => {
                 dbg_data.scenario = "0aa".to_string();
@@ -1180,7 +1296,10 @@ impl<N: Network> Inbound<N> {
                 {
                     let new_zone_uuid = BfUuid::generate();
 
-                    stuff.new_maintained_zone = Some(Zone::new(new_zone_uuid.to_string(), our_member_clone.get_id().to_string()));
+                    stuff.new_maintained_zone = Some(Zone::new(
+                        new_zone_uuid.to_string(),
+                        our_member_clone.get_id().to_string(),
+                    ));
                     stuff.zone_uuid_for_our_member = Some(new_zone_uuid);
                     stuff.call_ack = true;
 
@@ -1200,11 +1319,14 @@ impl<N: Network> Inbound<N> {
                 {
                     let new_zone_uuid = BfUuid::generate();
 
-                    stuff.new_maintained_zone = Some(Zone::new(new_zone_uuid.to_string(), our_member_clone.get_id().to_string()));
+                    stuff.new_maintained_zone = Some(Zone::new(
+                        new_zone_uuid.to_string(),
+                        our_member_clone.get_id().to_string(),
+                    ));
                     stuff.zone_uuid_for_our_member = Some(new_zone_uuid);
                     stuff.call_ack = true;
 
-                    dbg_data.our_new_zone_id = new_zone_uuid.to_string() ;
+                    dbg_data.our_new_zone_id = new_zone_uuid.to_string();
                 }
                 // store the recipient address if not stored (ports
                 // should already be available)
@@ -1223,10 +1345,13 @@ impl<N: Network> Inbound<N> {
 
                             let mut new_zone_address = zone_address.clone();
 
-                            new_zone_address.set_address(hz_data.to_member.get_address().to_string());
-                            stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                            new_zone_address
+                                .set_address(hz_data.to_member.get_address().to_string());
+                            stuff.additional_address_for_our_member =
+                                Some((zone_address.clone(), new_zone_address));
 
-                            dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                            dbg_data.additional_address_update =
+                                stuff.additional_address_for_our_member.clone();
 
                             break;
                         }
@@ -1273,10 +1398,13 @@ impl<N: Network> Inbound<N> {
 
                             let mut new_zone_address = zone_address.clone();
 
-                            new_zone_address.set_address(hz_data.to_member.get_address().to_string());
-                            stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                            new_zone_address
+                                .set_address(hz_data.to_member.get_address().to_string());
+                            stuff.additional_address_for_our_member =
+                                Some((zone_address.clone(), new_zone_address));
 
-                            dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                            dbg_data.additional_address_update =
+                                stuff.additional_address_for_our_member.clone();
 
                             break;
                         }
@@ -1296,7 +1424,7 @@ impl<N: Network> Inbound<N> {
                     stuff.zone_uuid_for_our_member = Some(sender_zone_uuid);
                     stuff.call_ack = true;
 
-                    dbg_data.our_new_zone_id = sender_zone_uuid.to_string() ;
+                    dbg_data.our_new_zone_id = sender_zone_uuid.to_string();
                 }
 
                 HandleZoneResults::Stuff(stuff)
@@ -1310,7 +1438,10 @@ impl<N: Network> Inbound<N> {
                 // generate my own zone
                 {
                     let new_zone_uuid = BfUuid::generate();
-                    stuff.new_maintained_zone = Some(Zone::new(new_zone_uuid.to_string(), our_member_clone.get_id().to_string()));
+                    stuff.new_maintained_zone = Some(Zone::new(
+                        new_zone_uuid.to_string(),
+                        our_member_clone.get_id().to_string(),
+                    ));
                     stuff.zone_uuid_for_our_member = Some(new_zone_uuid);
                     stuff.call_ack = true;
 
@@ -1388,7 +1519,8 @@ impl<N: Network> Inbound<N> {
                             let mut maybe_new_zone_id = None;
 
                             if sender_zone.has_successor() {
-                                let sender_successor_uuid = BfUuid::must_parse(sender_zone.get_successor());
+                                let sender_successor_uuid =
+                                    BfUuid::must_parse(sender_zone.get_successor());
 
                                 if sender_successor_uuid == zone_address_uuid {
                                     maybe_new_zone_id = Some(None);
@@ -1400,9 +1532,11 @@ impl<N: Network> Inbound<N> {
 
                                     if predecessor_uuid == zone_address_uuid {
                                         if sender_zone.has_successor() {
-                                            maybe_new_zone_id = Some(Some(sender_zone.get_successor().to_string()));
+                                            maybe_new_zone_id =
+                                                Some(Some(sender_zone.get_successor().to_string()));
                                         } else {
-                                            maybe_new_zone_id = Some(Some(sender_zone_uuid.to_string()));
+                                            maybe_new_zone_id =
+                                                Some(Some(sender_zone_uuid.to_string()));
                                         }
                                     }
                                 }
@@ -1412,10 +1546,13 @@ impl<N: Network> Inbound<N> {
                                     let mut new_zone_address = zone_address.clone();
 
                                     new_zone_address.set_zone_id(zone_id);
-                                    new_zone_address.set_address(hz_data.to_member.get_address().to_string());
-                                    stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                                    new_zone_address
+                                        .set_address(hz_data.to_member.get_address().to_string());
+                                    stuff.additional_address_for_our_member =
+                                        Some((zone_address.clone(), new_zone_address));
 
-                                    dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                                    dbg_data.additional_address_update =
+                                        stuff.additional_address_for_our_member.clone();
 
                                     true
                                 }
@@ -1447,9 +1584,11 @@ impl<N: Network> Inbound<N> {
                                 let mut new_zone_address = zone_address.clone();
 
                                 new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                                stuff.additional_address_for_our_member =
+                                    Some((zone_address.clone(), new_zone_address));
 
-                                dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                                dbg_data.additional_address_update =
+                                    stuff.additional_address_for_our_member.clone();
 
                                 done = true;
                                 break;
@@ -1472,10 +1611,13 @@ impl<N: Network> Inbound<N> {
                                 let mut new_zone_address = zone_address.clone();
 
                                 new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                new_zone_address.set_address(hz_data.to_member.get_address().to_string());
-                                stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                                new_zone_address
+                                    .set_address(hz_data.to_member.get_address().to_string());
+                                stuff.additional_address_for_our_member =
+                                    Some((zone_address.clone(), new_zone_address));
 
-                                dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                                dbg_data.additional_address_update =
+                                    stuff.additional_address_for_our_member.clone();
 
                                 done = true;
                                 break;
@@ -1533,13 +1675,20 @@ impl<N: Network> Inbound<N> {
                         CmpOrdering::Equal => HandleZoneResults::Nothing,
                         CmpOrdering::Greater => {
                             let mut stuff = HandleZoneResultsStuff::default();
-                            let maybe_msg_and_target = if let Some(our_zone_clone) = maybe_our_zone_clone {
+                            let maybe_msg_and_target = if let Some(our_zone_clone) =
+                                maybe_our_zone_clone
+                            {
                                 let maybe_target = {
-                                    dbg_data.parse_failures.push(format!("our zone clone: {:#?}", our_zone_clone));
+                                    dbg_data
+                                        .parse_failures
+                                        .push(format!("our zone clone: {:#?}", our_zone_clone));
                                     if our_zone_clone.has_successor() {
-                                        dbg_data.parse_failures.push("our zone clone has successor".to_string());
+                                        dbg_data
+                                            .parse_failures
+                                            .push("our zone clone has successor".to_string());
 
-                                        let successor_uuid = BfUuid::must_parse(our_zone_clone.get_successor());
+                                        let successor_uuid =
+                                            BfUuid::must_parse(our_zone_clone.get_successor());
 
                                         if successor_uuid < sender_zone_uuid {
                                             dbg_data.parse_failures.push(format!("our zone clone successor {} is less than sender zone {}, targetting {:#?}", successor_uuid, sender_zone_uuid, maybe_our_zone_maintainer_clone));
@@ -1549,7 +1698,10 @@ impl<N: Network> Inbound<N> {
                                             None
                                         }
                                     } else {
-                                        dbg_data.parse_failures.push(format!("our zone clone has no successor, targetting {:#?}", maybe_our_zone_maintainer_clone));
+                                        dbg_data.parse_failures.push(format!(
+                                            "our zone clone has no successor, targetting {:#?}",
+                                            maybe_our_zone_maintainer_clone
+                                        ));
                                         maybe_our_zone_maintainer_clone
                                     }
                                 };
@@ -1567,7 +1719,10 @@ impl<N: Network> Inbound<N> {
                                     None
                                 }
                             } else {
-                                error!("We have no information about our current zone {}", our_member_clone.get_zone_id());
+                                error!(
+                                    "We have no information about our current zone {}",
+                                    our_member_clone.get_zone_id()
+                                );
                                 None
                             };
 
@@ -1660,7 +1815,8 @@ impl<N: Network> Inbound<N> {
                             let mut maybe_new_zone_id = None;
 
                             if sender_zone.has_successor() {
-                                let sender_successor_uuid = BfUuid::must_parse(sender_zone.get_successor());
+                                let sender_successor_uuid =
+                                    BfUuid::must_parse(sender_zone.get_successor());
 
                                 if sender_successor_uuid == zone_address_uuid {
                                     maybe_new_zone_id = Some(None);
@@ -1672,9 +1828,11 @@ impl<N: Network> Inbound<N> {
 
                                     if predecessor_uuid == zone_address_uuid {
                                         if sender_zone.has_successor() {
-                                            maybe_new_zone_id = Some(Some(sender_zone.get_successor().to_string()));
+                                            maybe_new_zone_id =
+                                                Some(Some(sender_zone.get_successor().to_string()));
                                         } else {
-                                            maybe_new_zone_id = Some(Some(sender_zone_uuid.to_string()));
+                                            maybe_new_zone_id =
+                                                Some(Some(sender_zone_uuid.to_string()));
                                         }
                                     }
                                 }
@@ -1684,10 +1842,13 @@ impl<N: Network> Inbound<N> {
                                     let mut new_zone_address = zone_address.clone();
 
                                     new_zone_address.set_zone_id(zone_id);
-                                    new_zone_address.set_address(hz_data.to_member.get_address().to_string());
-                                    stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                                    new_zone_address
+                                        .set_address(hz_data.to_member.get_address().to_string());
+                                    stuff.additional_address_for_our_member =
+                                        Some((zone_address.clone(), new_zone_address));
 
-                                    dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                                    dbg_data.additional_address_update =
+                                        stuff.additional_address_for_our_member.clone();
 
                                     true
                                 }
@@ -1719,9 +1880,11 @@ impl<N: Network> Inbound<N> {
                                 let mut new_zone_address = zone_address.clone();
 
                                 new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                                stuff.additional_address_for_our_member =
+                                    Some((zone_address.clone(), new_zone_address));
 
-                                dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                                dbg_data.additional_address_update =
+                                    stuff.additional_address_for_our_member.clone();
 
                                 done = true;
                                 break;
@@ -1744,10 +1907,13 @@ impl<N: Network> Inbound<N> {
                                 let mut new_zone_address = zone_address.clone();
 
                                 new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                new_zone_address.set_address(hz_data.to_member.get_address().to_string());
-                                stuff.additional_address_for_our_member = Some((zone_address.clone(), new_zone_address));
+                                new_zone_address
+                                    .set_address(hz_data.to_member.get_address().to_string());
+                                stuff.additional_address_for_our_member =
+                                    Some((zone_address.clone(), new_zone_address));
 
-                                dbg_data.additional_address_update = stuff.additional_address_for_our_member.clone();
+                                dbg_data.additional_address_update =
+                                    stuff.additional_address_for_our_member.clone();
 
                                 done = true;
                                 break;

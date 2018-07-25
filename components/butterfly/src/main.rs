@@ -58,7 +58,9 @@ fn main() {
     member.set_gossip_port(gport as i32);
 
     let network = RealNetwork::new_for_server(bind_to_addr, gossip_bind_addr);
-    let host_address = network.get_host_address().expect("Cannot get the real host address");
+    let host_address = network
+        .get_host_address()
+        .expect("Cannot get the real host address");
     let mut server = server::Server::<RealNetwork>::new(
         network,
         host_address,

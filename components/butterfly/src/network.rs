@@ -44,8 +44,7 @@ pub trait MyFromStr: FromStr {
     }
 }
 
-pub trait Address: MyFromStr + Debug + Copy + Clone + Display + Send + Sync + PartialEq {
-}
+pub trait Address: MyFromStr + Debug + Copy + Clone + Display + Send + Sync + PartialEq {}
 
 pub trait AddressAndPort: MyFromStr + Copy + Clone + Debug + Display + Send + Sync {
     type Address: Address;
@@ -115,8 +114,7 @@ impl MyFromStr for IpAddr {
     type MyErr = <Self as FromStr>::Err;
 }
 
-impl Address for IpAddr {
-}
+impl Address for IpAddr {}
 
 impl MyFromStr for SocketAddr {
     type MyErr = <Self as FromStr>::Err;

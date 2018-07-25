@@ -17,8 +17,10 @@ use std::u8;
 
 use habitat_butterfly::error::{Error, Result};
 use habitat_butterfly::member::{Health, Member};
-use habitat_butterfly::network::{Address, AddressAndPort, GossipReceiver, GossipSender, MyFromStr,
-                                 Network, SwimReceiver, SwimSender};
+use habitat_butterfly::network::{
+    Address, AddressAndPort, GossipReceiver, GossipSender, MyFromStr, Network, SwimReceiver,
+    SwimSender,
+};
 use habitat_butterfly::server::timing::Timing;
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::trace::Trace;
@@ -534,7 +536,10 @@ impl FromStr for TestAddrParts {
 
 fn field_name_check(actual: &str, expected: &str, idx: &str) -> StdResult<(), String> {
     if actual != expected {
-        Err(format!("expected {} field to be '{}', got {}", idx, expected, actual))
+        Err(format!(
+            "expected {} field to be '{}', got {}",
+            idx, expected, actual
+        ))
     } else {
         Ok(())
     }
@@ -570,11 +575,13 @@ impl TestPublicAddr {
         }
 
         field_name_check(&parts.fields[0].0, "zone-id", "first")?;
-        let zone_id = parts.fields[0].1
+        let zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get zone ID from first field: {}", e))?;
         field_name_check(&parts.fields[1].0, "idx", "second")?;
-        let idx = parts.fields[1].1
+        let idx = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get index from second field: {}", e))?;
 
@@ -653,11 +660,13 @@ impl TestLocalAddr {
         }
 
         field_name_check(&parts.fields[0].0, "zone-id", "first")?;
-        let zone_id = parts.fields[0].1
+        let zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get zone ID from first field: {}", e))?;
         field_name_check(&parts.fields[1].0, "idx", "second")?;
-        let idx = parts.fields[1].1
+        let idx = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get index from second field: {}", e))?;
 
@@ -739,11 +748,13 @@ impl TestPersistentMappingAddr {
         }
 
         field_name_check(&parts.fields[0].0, "parent-zone-id", "first")?;
-        let parent_zone_id = parts.fields[0].1
+        let parent_zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get parent zone ID from first field: {}", e))?;
         field_name_check(&parts.fields[1].0, "child-zone-id", "second")?;
-        let child_zone_id = parts.fields[1].1
+        let child_zone_id = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get child zone ID from second field: {}", e))?;
 
@@ -784,7 +795,11 @@ impl FromStr for TestPersistentMappingAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts).map_err(|e| {
-            Self::Err::new(s, format!("badly formed persistent mapping address: {}", e), 0)
+            Self::Err::new(
+                s,
+                format!("badly formed persistent mapping address: {}", e),
+                0,
+            )
         })
     }
 }
@@ -838,23 +853,28 @@ impl TestTemporaryMappingAddr {
         }
 
         field_name_check(&parts.fields[0].0, "parent-zone-id", "first")?;
-        let parent_zone_id = parts.fields[0].1
+        let parent_zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get parent zone ID from first field: {}", e))?;
         field_name_check(&parts.fields[1].0, "parent-server-idx", "second")?;
-        let parent_server_idx = parts.fields[1].1
+        let parent_server_idx = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get parent server index from second field: {}", e))?;
         field_name_check(&parts.fields[2].0, "child-zone-id", "third")?;
-        let child_zone_id = parts.fields[2].1
+        let child_zone_id = parts.fields[2]
+            .1
             .parse()
             .map_err(|e| format!("failed to get child zone ID from third field: {}", e))?;
         field_name_check(&parts.fields[3].0, "child-server-idx", "fourth")?;
-        let child_server_idx = parts.fields[3].1
+        let child_server_idx = parts.fields[3]
+            .1
             .parse()
             .map_err(|e| format!("failed to get child server index from fourth field: {}", e))?;
         field_name_check(&parts.fields[4].0, "random-value", "fifth")?;
-        let random_value = parts.fields[4].1
+        let random_value = parts.fields[4]
+            .1
             .parse()
             .map_err(|e| format!("failed to get random u16 value from fifth field: {}", e))?;
 
@@ -897,7 +917,11 @@ impl FromStr for TestTemporaryMappingAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts).map_err(|e| {
-            Self::Err::new(s, format!("badly formed temporary mapping address: {}", e), 0)
+            Self::Err::new(
+                s,
+                format!("badly formed temporary mapping address: {}", e),
+                0,
+            )
         })
     }
 }
@@ -980,8 +1004,7 @@ impl MyFromStr for TestAddr {
     type MyErr = <Self as FromStr>::Err;
 }
 
-impl Address for TestAddr {
-}
+impl Address for TestAddr {}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 struct TestAddrAndPort {
@@ -1665,7 +1688,9 @@ impl TestNetworkSwitchBoard {
         let name = None;
         let data_path = None::<PathBuf>;
         let suitability = Box::new(TestSuitability(idx));
-        let host_address = network.get_host_address().expect("failed to get host address");
+        let host_address = network
+            .get_host_address()
+            .expect("failed to get host address");
         let mut butterfly = Server::new(
             network,
             host_address,
@@ -1710,15 +1735,16 @@ impl TestNetworkSwitchBoard {
 
     fn health_of(&self, from_idx: usize, to_idx: usize) -> Option<Health> {
         let servers = self.read_servers();
-        let to_member = servers[to_idx]
-            .butterfly
-            .read_member();
+        let to_member = servers[to_idx].butterfly.read_member();
         let maybe_health = servers[from_idx]
             .butterfly
             .member_list
             .health_of(&to_member);
 
-        println!("{} sees {} as {:?}", servers[from_idx].addr, servers[to_idx].addr, maybe_health);
+        println!(
+            "{} sees {} as {:?}",
+            servers[from_idx].addr, servers[to_idx].addr, maybe_health
+        );
 
         maybe_health
     }
