@@ -1682,7 +1682,11 @@ impl TestNetworkSwitchBoard {
         zones_count == zone_uuids.len()
     }
 
-    fn start_server(&self, addr: TestAddrAndPort, expose_data: Vec<ExposeData<TestAddr>>) -> TestServer {
+    fn start_server(
+        &self,
+        addr: TestAddrAndPort,
+        expose_data: Vec<ExposeData<TestAddr>>,
+    ) -> TestServer {
         let network = self.create_test_network(addr);
         let mut servers = self.write_servers();
         let idx = servers.len();
@@ -1697,7 +1701,12 @@ impl TestNetworkSwitchBoard {
         TestNetwork::new(addr, swim_in, swim_out, gossip_in, gossip_out)
     }
 
-    fn create_test_server(&self, network: TestNetwork, idx: u64, expose_data: Vec<ExposeData<TestAddr>>) -> TestServer {
+    fn create_test_server(
+        &self,
+        network: TestNetwork,
+        idx: u64,
+        expose_data: Vec<ExposeData<TestAddr>>,
+    ) -> TestServer {
         let addr = network.get_addr();
         let member = create_member_from_addr(addr);
         let trace = Trace::default();
