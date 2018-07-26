@@ -47,7 +47,7 @@ use serde::{Serialize, Serializer};
 
 use error::{Error, Result};
 use member::{Health, Member, MemberList};
-use message::{self, BfUuid, UuidSimple, swim::ZoneAddress};
+use message::{self, swim::ZoneAddress, BfUuid, UuidSimple};
 use network::{AddressAndPort, Network};
 use rumor::dat_file::DatFile;
 use rumor::departure::Departure;
@@ -1085,7 +1085,10 @@ impl<N: Network> Server<N> {
                 changed = true;
             }
 
-            for (expose_data, zone_address) in expose_data_vec.drain(0..additional_addresses.len()).zip(additional_addresses.iter_mut()) {
+            for (expose_data, zone_address) in expose_data_vec
+                .drain(0..additional_addresses.len())
+                .zip(additional_addresses.iter_mut())
+            {
                 if zone_address.get_swim_port() != expose_data.swim_port as i32 {
                     zone_address.set_swim_port(expose_data.swim_port as i32);
                     changed = true;
