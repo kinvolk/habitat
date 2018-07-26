@@ -47,7 +47,7 @@ use serde::{Serialize, Serializer};
 
 use error::{Error, Result};
 use member::{Health, Member, MemberList};
-use message::{self, BfUuid, UuidSimple};
+use message::{self, swim::ZoneAddress, BfUuid, UuidSimple};
 use network::{AddressAndPort, Network};
 use rumor::dat_file::DatFile;
 use rumor::departure::Departure;
@@ -58,7 +58,7 @@ use rumor::service_config::ServiceConfig;
 use rumor::service_file::ServiceFile;
 use rumor::{Rumor, RumorKey, RumorStore};
 use trace::{Trace, TraceKind};
-use zone::{Zone, ZoneList};
+use zone::{ExposeData, Zone, ZoneList};
 
 pub trait Suitability: Debug + Send + Sync {
     fn get(&self, service_group: &ServiceGroup) -> u64;
@@ -1069,6 +1069,63 @@ impl<N: Network> Server<N> {
 
     pub fn write_member(&self) -> RwLockWriteGuard<Member> {
         self.member.write().expect("Member lock is poisoned")
+    }
+
+    pub fn merge_expose_data(
+        &self,
+        mut expose_data_vec: Vec<ExposeData<<N::AddressAndPort as AddressAndPort>::Address>>,
+    ) {
+        let mut member = self.write_member();
+        let mut changed = false;
+        {
+            let additional_addresses = member.mut_additional_addresses();
+
+            if additional_addresses.len() > expose_data_vec.len() {
+                additional_addresses.truncate(expose_data_vec.len());
+                changed = true;
+            }
+
+            for (expose_data, zone_address) in expose_data_vec
+                .drain(0..additional_addresses.len())
+                .zip(additional_addresses.iter_mut())
+            {
+                if zone_address.get_swim_port() != expose_data.swim_port as i32 {
+                    zone_address.set_swim_port(expose_data.swim_port as i32);
+                    changed = true;
+                }
+                if zone_address.get_gossip_port() != expose_data.gossip_port as i32 {
+                    zone_address.set_gossip_port(expose_data.gossip_port as i32);
+                    changed = true;
+                }
+                if let Some(address) = expose_data.address {
+                    let address_str = address.to_string();
+
+                    if zone_address.get_address() != address_str {
+                        zone_address.set_address(address_str);
+                        changed = true;
+                    }
+                }
+            }
+            // extra exposed addresses, not yet reflected in additional addresses
+            for expose_data in expose_data_vec.drain(..) {
+                let mut zone_address = ZoneAddress::default();
+
+                zone_address.set_swim_port(expose_data.swim_port as i32);
+                zone_address.set_gossip_port(expose_data.gossip_port as i32);
+                if let Some(address) = expose_data.address {
+                    zone_address.set_address(address.to_string());
+                }
+                additional_addresses.push(zone_address);
+                changed = true;
+            }
+        }
+
+        if changed {
+            let incarnation = member.get_incarnation();
+
+            member.set_incarnation(incarnation + 1);
+            self.insert_member(member.clone(), Health::Alive);
+        }
     }
 }
 
