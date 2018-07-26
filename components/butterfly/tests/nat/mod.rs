@@ -24,6 +24,7 @@ use habitat_butterfly::network::{
 use habitat_butterfly::server::timing::Timing;
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::trace::Trace;
+use habitat_butterfly::zone::ExposeData;
 use habitat_core::service::ServiceGroup;
 
 // ZoneID is a number that identifies a zone. Within a zone all the
@@ -1353,6 +1354,22 @@ impl NatHole {
     pub fn new(addr: TestAddrAndPort) -> Self {
         Self { addr }
     }
+
+    pub fn to_expose_data(self) -> ExposeData<TestAddr> {
+        ExposeData {
+            address: Some(self.addr.addr),
+            swim_port: self.addr.port,
+            gossip_port: self.addr.port,
+        }
+    }
+
+    pub fn to_expose_data_stripped(self) -> ExposeData<TestAddr> {
+        ExposeData {
+            address: None,
+            swim_port: self.addr.port,
+            gossip_port: self.addr.port,
+        }
+    }
 }
 
 impl TalkTarget for NatHole {
@@ -1538,35 +1555,35 @@ impl TestNetworkSwitchBoard {
      */
 
     pub fn start_server_in_zone(&self, zone_id: ZoneID) -> TestServer {
-        self.start_server_in_zone_with_holes(zone_id, Vec::new())
+        self.start_server_in_zone_with_expose_data(zone_id, Vec::new())
     }
 
-    pub fn start_server_in_zone_with_holes(
+    pub fn start_server_in_zone_with_expose_data(
         &self,
         zone_id: ZoneID,
-        holes: Vec<NatHole>,
+        expose_data: Vec<ExposeData<TestAddr>>,
     ) -> TestServer {
         let addr = {
             let mut addresses = self.get_addresses_guard();
             addresses.generate_address_for_server(zone_id)
         };
-        self.start_server(addr, holes)
+        self.start_server(addr, expose_data)
     }
 
     pub fn start_public_server_in_zone(&self, zone_id: ZoneID) -> TestServer {
-        self.start_public_server_in_zone_with_holes(zone_id, Vec::new())
+        self.start_public_server_in_zone_with_expose_data(zone_id, Vec::new())
     }
 
-    pub fn start_public_server_in_zone_with_holes(
+    pub fn start_public_server_in_zone_with_expose_data(
         &self,
         zone_id: ZoneID,
-        holes: Vec<NatHole>,
+        expose_data: Vec<ExposeData<TestAddr>>,
     ) -> TestServer {
         let addr = {
             let mut addresses = self.get_addresses_guard();
             addresses.generate_public_address_for_server(zone_id)
         };
-        self.start_server(addr, holes)
+        self.start_server(addr, expose_data)
     }
 
     /*
@@ -1665,11 +1682,11 @@ impl TestNetworkSwitchBoard {
         zones_count == zone_uuids.len()
     }
 
-    fn start_server(&self, addr: TestAddrAndPort, _holes: Vec<NatHole>) -> TestServer {
+    fn start_server(&self, addr: TestAddrAndPort, expose_data: Vec<ExposeData<TestAddr>>) -> TestServer {
         let network = self.create_test_network(addr);
         let mut servers = self.write_servers();
         let idx = servers.len();
-        let server = self.create_test_server(network, idx as u64);
+        let server = self.create_test_server(network, idx as u64, expose_data);
         servers.push(server.clone());
         server
     }
@@ -1680,7 +1697,7 @@ impl TestNetworkSwitchBoard {
         TestNetwork::new(addr, swim_in, swim_out, gossip_in, gossip_out)
     }
 
-    fn create_test_server(&self, network: TestNetwork, idx: u64) -> TestServer {
+    fn create_test_server(&self, network: TestNetwork, idx: u64, expose_data: Vec<ExposeData<TestAddr>>) -> TestServer {
         let addr = network.get_addr();
         let member = create_member_from_addr(addr);
         let trace = Trace::default();
@@ -1702,7 +1719,10 @@ impl TestNetworkSwitchBoard {
             suitability,
         );
         let timing = Timing::default();
+
+        butterfly.merge_expose_data(expose_data);
         butterfly.start(timing).expect("failed to start server");
+
         TestServer { butterfly, addr }
     }
 

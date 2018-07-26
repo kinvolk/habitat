@@ -79,7 +79,7 @@ fn different_zones_get_different_ids_few() {
     );
     let hole0 = nat.punch_hole();
     let parent_server0 = switch_board.start_server_in_zone(parent_zone);
-    let child_server0 = switch_board.start_server_in_zone_with_holes(child_zone, vec![hole0]);
+    let child_server0 = switch_board.start_server_in_zone_with_expose_data(child_zone, vec![hole0.to_expose_data()]);
 
     nat.make_route(hole0, child_server0.addr);
     parent_server0.talk_to(vec![&hole0]);
@@ -106,9 +106,9 @@ fn different_zones_get_different_ids_many() {
     let parent_server0 = switch_board.start_server_in_zone(parent_zone);
     let parent_server1 = switch_board.start_server_in_zone(parent_zone);
     let parent_server2 = switch_board.start_server_in_zone(parent_zone);
-    let child_server0 = switch_board.start_server_in_zone_with_holes(child_zone, vec![hole0]);
-    let child_server1 = switch_board.start_server_in_zone_with_holes(child_zone, vec![hole1]);
-    let child_server2 = switch_board.start_server_in_zone_with_holes(child_zone, vec![hole2]);
+    let child_server0 = switch_board.start_server_in_zone_with_expose_data(child_zone, vec![hole0.to_expose_data()]);
+    let child_server1 = switch_board.start_server_in_zone_with_expose_data(child_zone, vec![hole1.to_expose_data()]);
+    let child_server2 = switch_board.start_server_in_zone_with_expose_data(child_zone, vec![hole2.to_expose_data()]);
 
     nat.make_route(hole0, child_server0.addr);
     nat.make_route(hole1, child_server1.addr);
