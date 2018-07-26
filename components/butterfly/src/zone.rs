@@ -16,7 +16,10 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::error::Error;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::ops::{Deref, DerefMut};
+use std::str::FromStr;
 
 use protobuf::RepeatedField;
 
@@ -24,6 +27,7 @@ use message::{
     swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumorType, Zone as ProtoZone}, BfUuid,
     UuidSimple,
 };
+use network::Address;
 use rumor::RumorKey;
 
 /// A zone in the swim group. Passes most of its functionality along
@@ -380,5 +384,120 @@ impl ZoneList {
         } else {
             false
         }
+    }
+}
+
+pub struct ExposeData<A: Address> {
+    pub address: Option<A>,
+    pub swim_port: u16,
+    pub gossip_port: u16,
+}
+
+#[derive(Debug)]
+pub struct ExposeDataParseError {
+    kind: ExposeDataParseErrorKind,
+}
+
+#[derive(Debug)]
+enum ExposeDataParseErrorKind {
+    InvalidFormat,
+    InvalidAddress,
+    InvalidSwimPort,
+    InvalidGossipPort,
+}
+
+impl ExposeDataParseError {
+    fn new_bad_format() -> Self {
+        Self {
+            kind: ExposeDataParseErrorKind::InvalidFormat,
+        }
+    }
+
+    fn new_bad_address() -> Self {
+        Self {
+            kind: ExposeDataParseErrorKind::InvalidAddress,
+        }
+    }
+
+    fn new_bad_swim_port() -> Self {
+        Self {
+            kind: ExposeDataParseErrorKind::InvalidSwimPort,
+        }
+    }
+
+    fn new_bad_gossip_port() -> Self {
+        Self {
+            kind: ExposeDataParseErrorKind::InvalidGossipPort,
+        }
+    }
+
+    fn describe(&self) -> &str {
+        match self.kind {
+            ExposeDataParseErrorKind::InvalidFormat => {
+                "invalid format of the expose data string, should be either \
+                 <address>:<swim port>:<gossip port> or <swim port>:<gossip_port>"
+            }
+            ExposeDataParseErrorKind::InvalidAddress => "invalid address in the expose data string",
+            ExposeDataParseErrorKind::InvalidSwimPort => {
+                "invalid SWIM port in the expose data string"
+            }
+            ExposeDataParseErrorKind::InvalidGossipPort => {
+                "invalid gossip port in the expose data string"
+            }
+        }
+    }
+}
+
+impl Display for ExposeDataParseError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        self.describe().fmt(f)
+    }
+}
+
+impl Error for ExposeDataParseError {
+    fn description(&self) -> &str {
+        self.describe()
+    }
+}
+
+// strings accepted:
+//  address:swim_port:gossip_port
+//  swim_port:gossip_port
+impl<A: Address> FromStr for ExposeData<A> {
+    type Err = ExposeDataParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.rsplit(':');
+        let gossip_port = parts
+            .next()
+            .ok_or(ExposeDataParseError::new_bad_format())?
+            .parse()
+            .map_err(|_| ExposeDataParseError::new_bad_gossip_port())?;
+        let swim_port = parts
+            .next()
+            .ok_or(ExposeDataParseError::new_bad_format())?
+            .parse()
+            .map_err(|_| ExposeDataParseError::new_bad_swim_port())?;
+        // some -> parse -> Ok(addr) -> Ok(Some(addr))      -> ? -> Some(addr)
+        //               -> Err(…)   -> Err(InvalidAddress) -> ? -> return Err(InvalidAddress)
+        // none -> Ok(None)                                 -> ? -> None
+        let address = parts
+            .next()
+            .map(|raw| {
+                raw.parse()
+                    .map_err(|_| ExposeDataParseError::new_bad_address())
+                    .map(|addr| Some(addr))
+            })
+            .unwrap_or(Ok(None))?;
+
+        if parts.next().is_some() {
+            return Err(ExposeDataParseError::new_bad_format());
+        }
+
+        Ok(Self {
+            address,
+            swim_port,
+            gossip_port,
+        })
     }
 }
