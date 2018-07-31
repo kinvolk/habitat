@@ -1110,6 +1110,7 @@ impl<N: Network> Server<N> {
             for expose_data in expose_data_vec.drain(..) {
                 let mut zone_address = ZoneAddress::default();
 
+                zone_address.set_zone_id(BfUuid::nil().to_string());
                 zone_address.set_swim_port(expose_data.swim_port as i32);
                 zone_address.set_gossip_port(expose_data.gossip_port as i32);
                 if let Some(address) = expose_data.address {

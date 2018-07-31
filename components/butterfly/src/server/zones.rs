@@ -84,6 +84,7 @@ pub struct HandleZoneDbgData {
     pub parse_failures: Vec<String>,
     pub zone_change_dbg_data: Option<ZoneChangeDbgData>,
     pub additional_address_update: Option<(ZoneAddress, ZoneAddress)>,
+    pub additional_address_msgs: Vec<String>,
     pub msg_and_target: Option<(ZoneChange, Member)>,
 }
 
@@ -107,7 +108,7 @@ pub struct HandleZoneData<'a, N: Network> {
     pub to_member: &'a ProtoMember,
     pub addr: <N as Network>::AddressAndPort,
     pub swim_type: Swim_Type,
-    //pub from_address_kind: AddressKind,
+    pub from_address_kind: AddressKind,
     pub to_address_kind: AddressKind,
     pub sender_in_the_same_zone_as_us: bool,
 }

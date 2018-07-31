@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::error::Error as StdError;
-use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::iter;
 use std::path::PathBuf;
 use std::result::Result as StdResult;
@@ -15,8 +15,11 @@ use std::thread;
 use std::time::Duration;
 use std::u8;
 
+use protobuf;
+
 use habitat_butterfly::error::{Error, Result};
 use habitat_butterfly::member::{Health, Member};
+use habitat_butterfly::message::{self, swim::{Rumor, Swim}};
 use habitat_butterfly::network::{
     Address, AddressAndPort, GossipReceiver, GossipSender, MyFromStr, Network, SwimReceiver,
     SwimSender,
@@ -25,6 +28,7 @@ use habitat_butterfly::server::timing::Timing;
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::trace::Trace;
 use habitat_butterfly::zone::ExposeData;
+use habitat_core::crypto::SymKey;
 use habitat_core::service::ServiceGroup;
 
 // ZoneID is a number that identifies a zone. Within a zone all the
@@ -975,12 +979,14 @@ impl TestAddr {
 
 impl Display for TestAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match self {
-            TestAddr::Public(addr) => addr.fmt(f),
-            TestAddr::Local(addr) => addr.fmt(f),
-            TestAddr::PersistentMapping(addr) => addr.fmt(f),
-            TestAddr::TemporaryMapping(addr) => addr.fmt(f),
-        }
+        let disp: &Display = match self {
+            TestAddr::Public(ref addr) => addr,
+            TestAddr::Local(ref addr) => addr,
+            TestAddr::PersistentMapping(ref addr) => addr,
+            TestAddr::TemporaryMapping(ref addr) => addr,
+        };
+
+        disp.fmt(f)
     }
 }
 
@@ -1246,11 +1252,41 @@ impl Addresses {
 // TestMessage is a wrapper around the SWIM or gossip message sent by
 // a butterfly server. Contains source and destination addresses used
 // to determine a routing.
-#[derive(Debug)]
 struct TestMessage {
     source: TestAddrAndPort,
     target: TestAddrAndPort,
     bytes: Vec<u8>,
+    dbg_key: Option<SymKey>,
+    channel_type: ChannelType,
+}
+
+impl Debug for TestMessage {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let mut debug_struct = f.debug_struct("TestMessage");
+
+        match message::unwrap_wire(&self.bytes, self.dbg_key.as_ref()) {
+            Ok(plain) => match self.channel_type {
+                ChannelType::SWIM => match protobuf::parse_from_bytes::<Swim>(&plain) {
+                    Ok(parsed) => debug_struct.field("protobuf", &parsed),
+                    Err(e) => debug_struct
+                            .field("parse_error", &e)
+                            .field("invalid-plain", &plain),
+                }
+                ChannelType::Gossip => match protobuf::parse_from_bytes::<Rumor>(&plain) {
+                    Ok(parsed) => debug_struct.field("protobuf", &parsed),
+                    Err(e) => debug_struct
+                        .field("parse_error", &e)
+                        .field("invalid-plain", &plain),
+                }
+            }
+            Err(e) => debug_struct
+                .field("decrypt_error", &e)
+                .field("bytes", &self.bytes)
+        }            .field("source", &self.source)
+            .field("target", &self.target)
+            .field("channel_type", &self.channel_type)
+.finish()
+    }
 }
 
 // LockedSender is a convenience struct to make mpsc::Sender fulfill
@@ -1698,7 +1734,7 @@ impl TestNetworkSwitchBoard {
     fn create_test_network(&self, addr: TestAddrAndPort) -> TestNetwork {
         let (swim_in, swim_out) = self.start_routing_thread(addr, ChannelType::SWIM);
         let (gossip_in, gossip_out) = self.start_routing_thread(addr, ChannelType::Gossip);
-        TestNetwork::new(addr, swim_in, swim_out, gossip_in, gossip_out)
+        TestNetwork::new(addr, swim_in, swim_out, gossip_in, gossip_out, None)
     }
 
     fn create_test_server(
@@ -1813,8 +1849,8 @@ impl TestNetworkSwitchBoard {
     }
 
     fn process_msg(&self, mut msg: TestMessage, channel_type: ChannelType) {
-        //let src = msg.source;
-        //let tgt = msg.target;
+        let src = msg.source;
+        let tgt = msg.target;
         let source_zone_id = match &msg.source.addr {
             &TestAddr::Public(ref pip) => pip.get_zone_id(),
             &TestAddr::Local(ref lip) => lip.get_zone_id(),
@@ -1840,15 +1876,18 @@ impl TestNetworkSwitchBoard {
                         if let Some(nat) = nats.get(&nats_key) {
                             if !nat.can_route(&mut msg, &traversal_info) {
                                 can_route = false;
+                                println!("ROUTING: can't route {:#?} from {} to {}, there is a route, but it's unreachable", msg, src, tgt);
                                 break;
                             }
                         } else {
                             can_route = false;
+                            println!("ROUTING: can't route {:#?} from {} to {}, there is a route, but no nat registered", msg, src, tgt);
                             break;
                         }
                     }
                     can_route
                 } else {
+                    println!("ROUTING: can't route {:#?} from {} to {}, no route", msg, src, tgt);
                     false
                 }
             }
@@ -1865,9 +1904,11 @@ impl TestNetworkSwitchBoard {
                         if let Some(nat) = nats.get(&nats_key) {
                             routed = nat.route(&mut msg);
                             if !routed {
+                                println!("ROUTING: can't {:#?} route from {} to {}, no mapping", msg, src, tgt);
                                 break;
                             }
                         } else {
+                            println!("ROUTING: can't route {:#?} from {} to {}, no registered nat", msg, src, tgt);
                             routed = false;
                         }
                     }
@@ -1892,6 +1933,8 @@ impl TestNetworkSwitchBoard {
                     let mut map = self.write_channel_map(channel_type);
                     map.remove(&target);
                 }
+            } else {
+                println!("ROUTING: couldn't send a message {:#?} from {} to {}, no out", msg, src, tgt);
             }
         }
         //println!("source: {}, target: {}, channel type: {:?}, can route across zones: {}, routed: {}", src, tgt, channel_type, can_route_across_zones, routed);
@@ -1997,6 +2040,7 @@ impl TestNetworkSwitchBoard {
 struct TestSwimSender {
     addr: TestAddrAndPort,
     sender: LockedSender<TestMessage>,
+    dbg_key: Option<SymKey>
 }
 
 impl SwimSender<TestAddrAndPort> for TestSwimSender {
@@ -2005,6 +2049,8 @@ impl SwimSender<TestAddrAndPort> for TestSwimSender {
             source: self.addr,
             target: addr,
             bytes: buf.to_owned(),
+            dbg_key: self.dbg_key.clone(),
+            channel_type: ChannelType::SWIM,
         };
         self.sender.send(msg).map_err(|_| {
             Error::SwimSendError("Receiver part of the channel is disconnected".to_owned())
@@ -2042,6 +2088,7 @@ struct TestGossipSender {
     source: TestAddrAndPort,
     target: TestAddrAndPort,
     sender: Sender<TestMessage>,
+    dbg_key: Option<SymKey>
 }
 
 impl GossipSender for TestGossipSender {
@@ -2050,6 +2097,8 @@ impl GossipSender for TestGossipSender {
             source: self.source,
             target: self.target,
             bytes: buf.to_vec(),
+            dbg_key: self.dbg_key.clone(),
+            channel_type: ChannelType::Gossip,
         };
         self.sender.send(msg).map_err(|_| {
             Error::GossipSendError("Receiver part of the channel is disconnected".to_owned())
@@ -2080,6 +2129,7 @@ struct TestNetwork {
     swim_out: Mutex<Option<Receiver<TestMessage>>>,
     gossip_in: LockedSender<TestMessage>,
     gossip_out: Mutex<Option<Receiver<TestMessage>>>,
+    dbg_key: Option<SymKey>,
 }
 
 impl TestNetwork {
@@ -2089,6 +2139,7 @@ impl TestNetwork {
         swim_out: Receiver<TestMessage>,
         gossip_in: Sender<TestMessage>,
         gossip_out: Receiver<TestMessage>,
+        dbg_key: Option<SymKey>,
     ) -> Self {
         Self {
             addr: addr,
@@ -2096,6 +2147,7 @@ impl TestNetwork {
             swim_out: Mutex::new(Some(swim_out)),
             gossip_in: LockedSender::new(gossip_in),
             gossip_out: Mutex::new(Some(gossip_out)),
+            dbg_key: dbg_key,
         }
     }
 
@@ -2123,6 +2175,7 @@ impl Network for TestNetwork {
         Ok(Self::SwimSender {
             addr: self.addr,
             sender: LockedSender::new(self.swim_in.cloned_sender()),
+            dbg_key: self.dbg_key.clone(),
         })
     }
 
@@ -2148,6 +2201,7 @@ impl Network for TestNetwork {
             source: self.addr,
             target: addr,
             sender: self.gossip_in.cloned_sender(),
+            dbg_key: self.dbg_key.clone(),
         })
     }
 

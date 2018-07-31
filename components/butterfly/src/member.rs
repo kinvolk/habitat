@@ -165,6 +165,29 @@ impl Member {
         Some(self.swim_socket_address())
     }
 
+    pub fn gossip_socket_address_for_zone<T: AddressAndPort>(&self, zone_id: &str) -> Option<T> {
+        if zone_id != self.get_zone_id() {
+            for zone_address in self.get_additional_addresses() {
+                if zone_address.get_zone_id() == zone_id {
+                    match T::Address::create_from_str(zone_address.get_address()) {
+                        Ok(addr) => {
+                            return Some(T::new_from_address_and_port(
+                                addr,
+                                zone_address.get_gossip_port() as u16,
+                            ))
+                        }
+                        Err(e) => {
+                            panic!("Cannot parse member {:?} additional address: {}", self, e);
+                        }
+                    }
+                }
+            }
+
+            return None;
+        }
+        Some(self.gossip_socket_address())
+    }
+
     /// Returns the gossip socket address of this member.
     ///
     /// # Panics
