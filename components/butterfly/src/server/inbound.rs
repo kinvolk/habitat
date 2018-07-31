@@ -72,7 +72,7 @@ impl<N: Network> Inbound<N> {
 
     /// Run the thread. Listens for messages up to 1k in size, and then processes them accordingly.
     pub fn run(&self) {
-        let mut recv_buffer: Vec<u8> = vec![0; 2048];
+        let mut recv_buffer: Vec<u8> = vec![0; 4096];
         loop {
             if self.server.pause.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(100));
