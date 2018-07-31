@@ -166,7 +166,13 @@ fn different_zones_get_different_ids_with_unexposed_servers() {
     assert!(switch_board.wait_for_health_all(Health::Alive));
     assert!(switch_board.wait_for_disjoint_settled_zones(vec![
         vec![&parent_server0, &parent_server1, &parent_server2],
-        vec![&child_server0, &child_server1, &child_server2,
-             &child_server3, &child_server4, &child_server5],
+        vec![
+            &child_server0,
+            &child_server1,
+            &child_server2,
+            &child_server3,
+            &child_server4,
+            &child_server5,
+        ],
     ]));
 }
