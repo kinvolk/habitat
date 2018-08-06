@@ -4,6 +4,20 @@ use nat::{TestNetworkSwitchBoard, ZoneID};
 
 use habitat_butterfly::member::Health;
 
+// Convenient macro for forcing the coercion of arrays into
+// slices. Useful when creating a slice of AsRef<T>, from a slice of
+// slices. Having a slice of arrays would work only when all the array
+// have the same length.
+macro_rules! slc {
+    ($($x:expr),*) => {
+        &([$($x,)*])[..]
+    };
+    // This is to allow a trailing comma.
+    ($($x:expr),*,) => {
+        slc![$($x),*]
+    }
+}
+
 #[test]
 fn servers_establish_the_same_zone_few() {
     let switch_board = TestNetworkSwitchBoard::new();
@@ -11,9 +25,9 @@ fn servers_establish_the_same_zone_few() {
     let server0 = switch_board.start_server_in_zone(zone);
     let server1 = switch_board.start_server_in_zone(zone);
 
-    server0.talk_to(vec![&server1]);
-    assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_same_settled_zone(vec![&server0, &server1]));
+    server0.talk_to(&[&server1]);
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
+    assert!(switch_board.wait_for_same_settled_zone(&[&server0, &server1]));
 }
 
 #[test]
@@ -29,10 +43,10 @@ fn servers_establish_the_same_zone_many() {
     let server4 = switch_board.start_server_in_zone(zone);
     let server5 = switch_board.start_server_in_zone(zone);
 
-    server0.talk_to(vec![&server1, &server2, &server3]);
-    server2.talk_to(vec![&server3, &server4, &server5]);
-    assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_same_settled_zone(vec![
+    server0.talk_to(&[&server1, &server2, &server3]);
+    server2.talk_to(&[&server3, &server4, &server5]);
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
+    assert!(switch_board.wait_for_same_settled_zone(&[
         &server0, &server1, &server2, &server3, &server4, &server5,
     ]));
 }
@@ -46,24 +60,22 @@ fn sibling_zones_get_merged() {
     let server1a = switch_board.start_server_in_zone(zone);
     let server1b = switch_board.start_server_in_zone(zone);
 
-    server0a.talk_to(vec![&server0b]);
-    server1a.talk_to(vec![&server1b]);
-    // TODO(krnowak): This won't work, it tries to check health status
-    // of a server in one ring as seen by a server in another ring
-    //
-    //assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_disjoint_settled_zones(vec![
-        vec![&server0a, &server0b],
-        vec![&server1a, &server1b],
+    server0a.talk_to(&[&server0b]);
+    server1a.talk_to(&[&server1b]);
+    assert!(switch_board.wait_for_health_of_those(Health::Alive, &[&server0a, &server0b]));
+    assert!(switch_board.wait_for_health_of_those(Health::Alive, &[&server1a, &server1b]));
+    assert!(switch_board.wait_for_disjoint_settled_zones(&[
+        &[&server0a, &server0b],
+        &[&server1a, &server1b],
     ]));
 
     let server2 = switch_board.start_server_in_zone(zone);
 
-    server2.talk_to(vec![&server0a, &server1a]);
-    assert!(switch_board.wait_for_health_all(Health::Alive));
+    server2.talk_to(&[&server0a, &server1a]);
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
     assert!(
         switch_board
-            .wait_for_same_settled_zone(vec![&server0a, &server0b, &server1a, &server1b, &server2])
+            .wait_for_same_settled_zone(&[&server0a, &server0b, &server1a, &server1b, &server2])
     );
 }
 
@@ -83,11 +95,11 @@ fn different_zones_get_different_ids_few() {
         .start_server_in_zone_with_expose_data(child_zone, vec![hole0.to_expose_data()]);
 
     nat.make_route(hole0, child_server0.addr);
-    parent_server0.talk_to(vec![&hole0]);
-    assert!(switch_board.wait_for_health_all(Health::Alive));
+    parent_server0.talk_to(&[&hole0]);
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
     assert!(
         switch_board
-            .wait_for_disjoint_settled_zones(vec![vec![&parent_server0], vec![&child_server0]])
+            .wait_for_disjoint_settled_zones(&[&[&parent_server0], &[&child_server0]])
     );
 }
 
@@ -117,14 +129,14 @@ fn different_zones_get_different_ids_many() {
     nat.make_route(hole0, child_server0.addr);
     nat.make_route(hole1, child_server1.addr);
     nat.make_route(hole2, child_server2.addr);
-    parent_server0.talk_to(vec![&parent_server1, &parent_server2]);
-    child_server0.talk_to(vec![&child_server1, &child_server2]);
-    parent_server1.talk_to(vec![&hole0, &hole1]);
-    parent_server2.talk_to(vec![&hole2]);
-    assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_disjoint_settled_zones(vec![
-        vec![&parent_server0, &parent_server1, &parent_server2],
-        vec![&child_server0, &child_server1, &child_server2],
+    parent_server0.talk_to(&[&parent_server1, &parent_server2]);
+    child_server0.talk_to(&[&child_server1, &child_server2]);
+    parent_server1.talk_to(&[&hole0, &hole1]);
+    parent_server2.talk_to(&[&hole2]);
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
+    assert!(switch_board.wait_for_disjoint_settled_zones(&[
+        &[&parent_server0, &parent_server1, &parent_server2],
+        &[&child_server0, &child_server1, &child_server2],
     ]));
 }
 
@@ -158,15 +170,15 @@ fn different_zones_get_different_ids_with_unexposed_servers() {
     nat.make_route(hole1, child_server1.addr);
     nat.make_route(hole2, child_server2.addr);
 
-    parent_server0.talk_to(vec![&parent_server1, &parent_server2]);
-    child_server0.talk_to(vec![&child_server1, &child_server2, &child_server3]);
-    child_server3.talk_to(vec![&child_server4, &child_server5]);
-    parent_server1.talk_to(vec![&hole0, &hole1]);
-    parent_server2.talk_to(vec![&hole2]);
-    assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_disjoint_settled_zones(vec![
-        vec![&parent_server0, &parent_server1, &parent_server2],
-        vec![
+    parent_server0.talk_to(&[&parent_server1, &parent_server2]);
+    child_server0.talk_to(&[&child_server1, &child_server2, &child_server3]);
+    child_server3.talk_to(&[&child_server4, &child_server5]);
+    parent_server1.talk_to(&[&hole0, &hole1]);
+    parent_server2.talk_to(&[&hole2]);
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
+    assert!(switch_board.wait_for_disjoint_settled_zones(&[
+        slc![&parent_server0, &parent_server1, &parent_server2],
+        slc![
             &child_server0,
             &child_server1,
             &child_server2,
