@@ -23,7 +23,8 @@ use protobuf::RepeatedField;
 
 use member::Member;
 use message::{
-    swim::{Member as ProtoMember, Swim_Type, Zone as ProtoZone, ZoneAddress, ZoneChange}, BfUuid,
+    swim::{Member as ProtoMember, Swim_Type, Zone as ProtoZone, ZoneAddress, ZoneChange},
+    BfUuid,
 };
 use network::Network;
 use zone::Zone;

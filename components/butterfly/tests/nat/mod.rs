@@ -20,7 +20,8 @@ use protobuf;
 use habitat_butterfly::error::{Error, Result};
 use habitat_butterfly::member::{Health, Member};
 use habitat_butterfly::message::{
-    self, swim::{Rumor, Swim},
+    self,
+    swim::{Rumor, Swim},
 };
 use habitat_butterfly::network::{
     Address, AddressAndPort, GossipReceiver, GossipSender, MyFromStr, Network, SwimReceiver,
@@ -69,7 +70,8 @@ impl FromStr for ZoneID {
     type Err = String;
 
     fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        let raw_self = s.parse()
+        let raw_self = s
+            .parse()
             .map_err(|e| format!("'{}' is not a u8: {}", s, e))?;
         if !Self::is_raw_valid(raw_self) {
             return Err(format!("{} is not a valid ZoneID", raw_self));
@@ -212,7 +214,11 @@ impl ZoneMap {
     }
      */
 
-    pub fn is_zone_descendant_of_mut(&mut self, descendant_id: ZoneID, ancestor_id: ZoneID) -> bool {
+    pub fn is_zone_descendant_of_mut(
+        &mut self,
+        descendant_id: ZoneID,
+        ancestor_id: ZoneID,
+    ) -> bool {
         let mut queue = VecDeque::new();
         queue.push_back(ancestor_id);
         while let Some(id) = queue.pop_front() {
@@ -1679,7 +1685,10 @@ impl TestNetworkSwitchBoard {
         self.wait_for_disjoint_settled_zones(&[servers])
     }
 
-    pub fn wait_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
+    pub fn wait_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
         self.dsz_assert_assumptions(disjoint_servers);
         let rounds = self.gossip_rounds_in(4);
         let all_servers = {
@@ -1706,7 +1715,10 @@ impl TestNetworkSwitchBoard {
         }
     }
 
-    fn check_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
+    fn check_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
         if !self.dsz_check_equal_zones(disjoint_servers) {
             return false;
         }
@@ -1741,7 +1753,10 @@ impl TestNetworkSwitchBoard {
         }
     }
 
-    fn dsz_check_equal_zones<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
+    fn dsz_check_equal_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
         for servers in disjoint_servers {
             for pair in servers.as_ref().windows(2) {
                 let s0 = &pair[0];
@@ -1763,10 +1778,17 @@ impl TestNetworkSwitchBoard {
         true
     }
 
-    fn dsz_check_unique_zone_count<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
+    fn dsz_check_unique_zone_count<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
         let mut zone_uuids = disjoint_servers
             .iter()
-            .filter_map(|v| v.as_ref().first().map(|s| s.butterfly.get_settled_zone_id()))
+            .filter_map(|v| {
+                v.as_ref()
+                    .first()
+                    .map(|s| s.butterfly.get_settled_zone_id())
+            })
             .collect::<Vec<_>>();
 
         zone_uuids.sort_unstable();
@@ -1825,10 +1847,20 @@ impl TestNetworkSwitchBoard {
         butterfly.merge_expose_data(expose_data);
         butterfly.start(timing).expect("failed to start server");
 
-        TestServer { butterfly, addr, idx, zone_id }
+        TestServer {
+            butterfly,
+            addr,
+            idx,
+            zone_id,
+        }
     }
 
-    fn wait_for_health_of(&self, health: Health, servers: &[&TestServer], rounds: &Vec<isize>) -> bool {
+    fn wait_for_health_of(
+        &self,
+        health: Health,
+        servers: &[&TestServer],
+        rounds: &Vec<isize>,
+    ) -> bool {
         for lserver in servers {
             for rserver in servers {
                 if lserver.idx == rserver.idx {
@@ -1845,7 +1877,13 @@ impl TestNetworkSwitchBoard {
         true
     }
 
-    fn wait_for_health_of_pair(&self, health: Health, from: &TestServer, to: &TestServer, rounds: &[isize]) -> bool {
+    fn wait_for_health_of_pair(
+        &self,
+        health: Health,
+        from: &TestServer,
+        to: &TestServer,
+        rounds: &[isize],
+    ) -> bool {
         loop {
             if let Some(member_health) = self.health_of_pair(from, to) {
                 if member_health == health {
@@ -1870,12 +1908,12 @@ impl TestNetworkSwitchBoard {
     }
 
     fn health_of_pair(&self, from: &TestServer, to: &TestServer) -> Option<Health> {
-        let maybe_health = from.butterfly.member_list.health_of(&to.butterfly.read_member());
+        let maybe_health = from
+            .butterfly
+            .member_list
+            .health_of(&to.butterfly.read_member());
 
-        println!(
-            "{} sees {} as {:?}",
-            from.addr, to.addr, maybe_health,
-        );
+        println!("{} sees {} as {:?}", from.addr, to.addr, maybe_health,);
 
         maybe_health
     }
@@ -2259,7 +2297,8 @@ impl Network for TestNetwork {
     }
 
     fn create_swim_receiver(&self) -> Result<Self::SwimReceiver> {
-        match self.swim_out
+        match self
+            .swim_out
             .lock()
             .expect("SWIM receiver lock is poisoned")
             .take()
@@ -2285,7 +2324,8 @@ impl Network for TestNetwork {
     }
 
     fn create_gossip_receiver(&self) -> Result<Self::GossipReceiver> {
-        match self.gossip_out
+        match self
+            .gossip_out
             .lock()
             .expect("Gossip receiver lock is poisoned")
             .take()

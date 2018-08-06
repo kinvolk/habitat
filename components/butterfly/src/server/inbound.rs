@@ -28,7 +28,8 @@ use protobuf::{self, RepeatedField};
 use error::Error;
 use member::{Health, Member};
 use message::{
-    swim::{Member as ProtoMember, Swim, Swim_Type, Zone as ProtoZone, ZoneChange}, BfUuid,
+    swim::{Member as ProtoMember, Swim, Swim_Type, Zone as ProtoZone, ZoneChange},
+    BfUuid,
 };
 use network::{AddressAndPort, MyFromStr, Network, SwimReceiver};
 use server::{
@@ -858,7 +859,8 @@ impl<N: Network> Inbound<N> {
             }
         };
 
-        let maybe_successor_clone = self.server
+        let maybe_successor_clone = self
+            .server
             .read_zone_list()
             .zones
             .get(maintained_zone_clone.get_successor())
