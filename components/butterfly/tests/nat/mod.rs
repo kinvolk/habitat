@@ -177,7 +177,7 @@ impl ZoneMap {
         assert_ne!(parent_id, child_id);
         self.ensure_zone(parent_id);
         self.ensure_zone(child_id);
-        assert!(!self.is_zone_child_of_mut(parent_id, child_id));
+        assert!(!self.is_zone_descendant_of_mut(parent_id, child_id));
         {
             let parent_zone = self.get_zone_mut(parent_id);
             parent_zone.children.insert(child_id);
@@ -212,15 +212,15 @@ impl ZoneMap {
     }
      */
 
-    pub fn is_zone_child_of_mut(&mut self, child_id: ZoneID, parent_id: ZoneID) -> bool {
+    pub fn is_zone_descendant_of_mut(&mut self, descendant_id: ZoneID, ancestor_id: ZoneID) -> bool {
         let mut queue = VecDeque::new();
-        queue.push_back(parent_id);
+        queue.push_back(ancestor_id);
         while let Some(id) = queue.pop_front() {
             let zone = self.get_zone_mut(id);
-            if zone.children.contains(&child_id) {
+            if zone.children.contains(&descendant_id) {
                 return true;
             }
-            queue.extend(zone.children.iter());
+            queue.extend(&zone.children);
         }
         false
     }
@@ -1110,14 +1110,17 @@ trait TalkTarget {
 struct TestServer {
     butterfly: Server<TestNetwork>,
     addr: TestAddrAndPort,
+    idx: usize,
+    zone_id: ZoneID,
 }
 
 impl TestServer {
-    pub fn talk_to(&self, talk_targets: Vec<&TalkTarget>) {
-        let mut members = Vec::with_capacity(talk_targets.len());
-        for talk_target in talk_targets {
-            members.push(talk_target.create_member_info());
-        }
+    pub fn talk_to(&self, talk_targets: &[&TalkTarget]) {
+        let members = talk_targets
+            .iter()
+            .map(|tt| tt.create_member_info())
+            .collect();
+
         self.butterfly.member_list.set_initial_members(members);
     }
 }
@@ -1655,47 +1658,96 @@ impl TestNetworkSwitchBoard {
     }
      */
 
-    pub fn wait_for_health_all(&self, health: Health) -> bool {
-        let server_count = self.read_servers().len();
-        for l in 0..server_count {
-            for r in 0..server_count {
-                if l == r {
-                    continue;
-                }
-                if !self.wait_for_health_of(l, r, health) {
-                    return false;
-                }
-                if !self.wait_for_health_of(r, l, health) {
-                    return false;
+    pub fn wait_for_health_of_all(&self, health: Health) -> bool {
+        let servers = self.read_servers().clone();
+        let rounds = self.gossip_rounds_in(4);
+        let servers_refs = servers.iter().collect::<Vec<_>>();
+
+        self.wait_for_health_of(health, &servers_refs, &rounds)
+    }
+
+    pub fn wait_for_health_of_those<'a, T>(&self, health: Health, servers: T) -> bool
+    where
+        T: AsRef<[&'a TestServer]>,
+    {
+        let rounds = self.gossip_rounds_in(4);
+
+        self.wait_for_health_of(health, servers.as_ref(), &rounds)
+    }
+
+    pub fn wait_for_same_settled_zone(&self, servers: &[&TestServer]) -> bool {
+        self.wait_for_disjoint_settled_zones(&[servers])
+    }
+
+    pub fn wait_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
+        self.dsz_assert_assumptions(disjoint_servers);
+        let rounds = self.gossip_rounds_in(4);
+        let all_servers = {
+            let mut all_servers = Vec::new();
+
+            for servers in disjoint_servers {
+                for server in servers.as_ref() {
+                    all_servers.push(*server);
                 }
             }
-        }
-        true
-    }
 
-    pub fn wait_for_same_settled_zone(&self, servers: Vec<&TestServer>) -> bool {
-        self.wait_for_disjoint_settled_zones(vec![servers])
-    }
+            all_servers
+        };
 
-    pub fn wait_for_disjoint_settled_zones(&self, disjoint_servers: Vec<Vec<&TestServer>>) -> bool {
-        let rounds_in = self.gossip_rounds_in(4);
         loop {
-            if Self::check_for_disjoint_settled_zones(&disjoint_servers) {
+            if self.check_for_disjoint_settled_zones(disjoint_servers) {
                 return true;
             }
-            if self.reached_max_rounds(&rounds_in) {
+
+            if self.reached_max_rounds(&all_servers, &rounds) {
                 return false;
             }
             thread::sleep(Duration::from_millis(500));
         }
     }
 
-    fn check_for_disjoint_settled_zones(disjoint_servers: &Vec<Vec<&TestServer>>) -> bool {
-        for servers in disjoint_servers.iter() {
-            for pair in servers.windows(2) {
+    fn check_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
+        if !self.dsz_check_equal_zones(disjoint_servers) {
+            return false;
+        }
+        if !self.dsz_check_unique_zone_count(disjoint_servers) {
+            return false;
+        }
+
+        true
+    }
+
+    fn dsz_assert_assumptions<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) {
+        let mut ids = Vec::new();
+        let mut indices = Vec::new();
+
+        assert!(!disjoint_servers.is_empty());
+        for servers_to_ref in disjoint_servers {
+            let servers = servers_to_ref.as_ref();
+
+            assert!(!servers.is_empty());
+
+            let zone_id = servers[0].zone_id;
+
+            assert!(!ids.contains(&zone_id));
+            assert!(!indices.contains(&servers[0].idx));
+            ids.push(zone_id);
+            indices.push(servers[0].idx);
+            for server in servers.iter().skip(1) {
+                assert!(server.zone_id == zone_id);
+                assert!(!indices.contains(&server.idx));
+                indices.push(server.idx);
+            }
+        }
+    }
+
+    fn dsz_check_equal_zones<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
+        for servers in disjoint_servers {
+            for pair in servers.as_ref().windows(2) {
                 let s0 = &pair[0];
                 let s1 = &pair[1];
 
+                assert!(s0.zone_id == s1.zone_id);
                 if !s0.butterfly.is_zone_settled() {
                     return false;
                 }
@@ -1708,16 +1760,18 @@ impl TestNetworkSwitchBoard {
             }
         }
 
+        true
+    }
+
+    fn dsz_check_unique_zone_count<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) -> bool {
         let mut zone_uuids = disjoint_servers
             .iter()
-            .filter_map(|v| v.first().map(|s| s.butterfly.get_settled_zone_id()))
+            .filter_map(|v| v.as_ref().first().map(|s| s.butterfly.get_settled_zone_id()))
             .collect::<Vec<_>>();
+
         zone_uuids.sort_unstable();
-
-        let zones_count = zone_uuids.len();
-
         zone_uuids.dedup();
-        zones_count == zone_uuids.len()
+        zone_uuids.len() == disjoint_servers.len()
     }
 
     fn start_server(
@@ -1728,7 +1782,7 @@ impl TestNetworkSwitchBoard {
         let network = self.create_test_network(addr);
         let mut servers = self.write_servers();
         let idx = servers.len();
-        let server = self.create_test_server(network, idx as u64, expose_data);
+        let server = self.create_test_server(network, idx, expose_data);
         servers.push(server.clone());
         server
     }
@@ -1742,7 +1796,7 @@ impl TestNetworkSwitchBoard {
     fn create_test_server(
         &self,
         network: TestNetwork,
-        idx: u64,
+        idx: usize,
         expose_data: Vec<ExposeData<TestAddr>>,
     ) -> TestServer {
         let addr = network.get_addr();
@@ -1751,7 +1805,7 @@ impl TestNetworkSwitchBoard {
         let ring_key = None;
         let name = None;
         let data_path = None::<PathBuf>;
-        let suitability = Box::new(TestSuitability(idx));
+        let suitability = Box::new(TestSuitability(idx as u64));
         let host_address = network
             .get_host_address()
             .expect("failed to get host address");
@@ -1766,33 +1820,48 @@ impl TestNetworkSwitchBoard {
             suitability,
         );
         let timing = Timing::default();
+        let zone_id = addr.get_zone_id();
 
         butterfly.merge_expose_data(expose_data);
         butterfly.start(timing).expect("failed to start server");
 
-        TestServer { butterfly, addr }
+        TestServer { butterfly, addr, idx, zone_id }
     }
 
-    fn wait_for_health_of(&self, from_idx: usize, to_idx: usize, health: Health) -> bool {
-        let rounds_in = self.gossip_rounds_in(4);
+    fn wait_for_health_of(&self, health: Health, servers: &[&TestServer], rounds: &Vec<isize>) -> bool {
+        for lserver in servers {
+            for rserver in servers {
+                if lserver.idx == rserver.idx {
+                    continue;
+                }
+                if !self.wait_for_health_of_pair(health, lserver, rserver, &rounds) {
+                    return false;
+                }
+                if !self.wait_for_health_of_pair(health, rserver, lserver, &rounds) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn wait_for_health_of_pair(&self, health: Health, from: &TestServer, to: &TestServer, rounds: &[isize]) -> bool {
         loop {
-            if let Some(member_health) = self.health_of(from_idx, to_idx) {
+            if let Some(member_health) = self.health_of_pair(from, to) {
                 if member_health == health {
                     return true;
                 }
             }
-            if self.reached_max_rounds(&rounds_in) {
+            if self.reached_max_rounds(&vec![from, to], rounds) {
                 return false;
             }
             thread::sleep(Duration::from_millis(500));
         }
     }
 
-    pub fn reached_max_rounds(&self, rounds_in: &Vec<isize>) -> bool {
-        let servers = self.read_servers();
-        for (idx, round) in rounds_in.into_iter().enumerate() {
-            let server = &servers[idx];
-            if server.butterfly.paused() || server.butterfly.swim_rounds() > *round {
+    pub fn reached_max_rounds(&self, servers: &[&TestServer], rounds: &[isize]) -> bool {
+        for server in servers {
+            if server.butterfly.paused() || server.butterfly.swim_rounds() > rounds[server.idx] {
                 continue;
             }
             return false;
@@ -1800,32 +1869,28 @@ impl TestNetworkSwitchBoard {
         true
     }
 
-    fn health_of(&self, from_idx: usize, to_idx: usize) -> Option<Health> {
-        let servers = self.read_servers();
-        let to_member = servers[to_idx].butterfly.read_member();
-        let maybe_health = servers[from_idx]
-            .butterfly
-            .member_list
-            .health_of(&to_member);
+    fn health_of_pair(&self, from: &TestServer, to: &TestServer) -> Option<Health> {
+        let maybe_health = from.butterfly.member_list.health_of(&to.butterfly.read_member());
 
         println!(
             "{} sees {} as {:?}",
-            servers[from_idx].addr, servers[to_idx].addr, maybe_health
+            from.addr, to.addr, maybe_health,
         );
 
         maybe_health
     }
 
+    fn gossip_rounds_in(&self, count: isize) -> Vec<isize> {
+        self.gossip_rounds().iter().map(|r| r + count).collect()
+    }
+
     fn gossip_rounds(&self) -> Vec<isize> {
         let servers = self.read_servers();
+
         servers
             .iter()
             .map(|s| s.butterfly.gossip_rounds())
             .collect()
-    }
-
-    fn gossip_rounds_in(&self, count: isize) -> Vec<isize> {
-        self.gossip_rounds().iter().map(|r| r + count).collect()
     }
 
     fn start_routing_thread(
