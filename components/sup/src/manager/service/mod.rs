@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use butterfly::rumor::service::Service as ServiceRumor;
+use butterfly::rumor::service::{Service as ServiceRumor, TaggedPorts};
 use hcore::crypto::hash;
 use hcore::fs::FS_ROOT_PATH;
 use hcore::package::metadata::Bind;
@@ -104,6 +104,7 @@ pub struct Service {
     pub sys: Arc<Sys>,
     pub initialized: bool,
     pub user_config_updated: bool,
+    pub tagged_ports: TaggedPorts,
 
     #[serde(skip_serializing)]
     config_renderer: CfgRenderer,
@@ -160,6 +161,7 @@ impl Service {
         spec: ServiceSpec,
         manager_fs_cfg: Arc<manager::FsCfg>,
         organization: Option<&str>,
+        tagged_ports: TaggedPorts,
     ) -> Result<Service> {
         spec.validate(&package)?;
         let all_pkg_binds = (&package).all_binds()?;
@@ -208,6 +210,7 @@ impl Service {
             svc_encrypted_password: spec.svc_encrypted_password,
             composite: spec.composite,
             defaults_updated: false,
+            tagged_ports: tagged_ports,
         })
     }
 
@@ -232,11 +235,12 @@ impl Service {
         spec: ServiceSpec,
         manager_fs_cfg: Arc<manager::FsCfg>,
         organization: Option<&str>,
+        tagged_ports: TaggedPorts,
     ) -> Result<Service> {
         // The package for a spec should already be installed.
         let fs_root_path = Path::new(&*FS_ROOT_PATH);
         let package = PackageInstall::load(&spec.ident, Some(fs_root_path))?;
-        Ok(Self::new(sys, package, spec, manager_fs_cfg, organization)?)
+        Ok(Self::new(sys, package, spec, manager_fs_cfg, organization, tagged_ports)?)
     }
 
     /// Create the service path for this package.
@@ -646,6 +650,7 @@ impl Service {
             &self.service_group,
             &self.sys.as_sys_info(),
             exported.as_ref(),
+            &self.tagged_ports,
         );
         rumor.set_incarnation(incarnation);
         rumor

@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, btree_map::Entry};
 use std::fmt;
 use std::str::FromStr;
 
-use butterfly::member::{Health, Member, MemberList};
+use butterfly::member::{Health, MemberList};
+use butterfly::message::{BfUuid, swim::{NamedPort, ZoneAddress}};
 use butterfly::rumor::election::Election as ElectionRumor;
 use butterfly::rumor::election::ElectionUpdate as ElectionUpdateRumor;
 use butterfly::rumor::election::Election_Status as ElectionStatusRumor;
@@ -24,6 +25,7 @@ use butterfly::rumor::service::Service as ServiceRumor;
 use butterfly::rumor::service::SysInfo;
 use butterfly::rumor::service_config::ServiceConfig as ServiceConfigRumor;
 use butterfly::rumor::service_file::ServiceFile as ServiceFileRumor;
+use butterfly::zone::{Reachable, ZoneList};
 use butterfly::rumor::RumorStore;
 use hcore;
 use hcore::package::PackageIdent;
@@ -48,6 +50,7 @@ pub struct CensusRing {
     last_membership_counter: usize,
     last_service_config_counter: usize,
     last_service_file_counter: usize,
+    last_zone_list_counter: usize,
 }
 
 impl CensusRing {
@@ -71,6 +74,7 @@ impl CensusRing {
             last_membership_counter: 0,
             last_service_config_counter: 0,
             last_service_file_counter: 0,
+            last_zone_list_counter: 0,
         }
     }
 
@@ -82,6 +86,7 @@ impl CensusRing {
         member_list: &MemberList,
         service_config_rumors: &RumorStore<ServiceConfigRumor>,
         service_file_rumors: &RumorStore<ServiceFileRumor>,
+        zone_list: &ZoneList,
     ) {
         // If ANY new rumor, of any type, has been received,
         // reconstruct the entire census state to ensure consistency
@@ -91,10 +96,12 @@ impl CensusRing {
             || (election_update_rumors.get_update_counter() > self.last_election_update_counter)
             || (service_config_rumors.get_update_counter() > self.last_service_config_counter)
             || (service_file_rumors.get_update_counter() > self.last_service_file_counter)
+            || (zone_list.get_update_counter() > self.last_zone_list_counter)
         {
+            outputln!("Updating census ring");
             self.changed = true;
 
-            self.populate_census(service_rumors, member_list);
+            self.populate_census(service_rumors, member_list, zone_list);
             self.update_from_election_store(election_rumors);
             self.update_from_election_update_store(election_update_rumors);
             self.update_from_service_config(service_config_rumors);
@@ -129,33 +136,31 @@ impl CensusRing {
         &mut self,
         service_rumors: &RumorStore<ServiceRumor>,
         member_list: &MemberList,
+        zone_list: &ZoneList,
     ) {
+        let our_zone_id = member_list
+            .members
+            .read()
+            .expect("Member list lock poisoned")
+            .get(&self.local_member_id)
+            .map(|m| BfUuid::parse_or_nil(m.get_zone_id(), "our zone ID"))
+            .unwrap_or_else(|| BfUuid::nil());
+        let updates_for_local_only = our_zone_id.is_nil();
+
         // Populate our census; new groups are created here, as are
         // new members of those groups.
-        //
-        // NOTE: In the current implementation, these members have an
-        // indeterminate health status until we process the contents
-        // of `member_list`. In the future, it would be nice to
-        // incorporate the member list into
-        // `census_group.update_from_service_rumors`, where new census
-        // members are created, so there would be no time that there
-        // is an indeterminate health anywhere.
         service_rumors.with_keys(|(service_group, rumors)| {
             if let Ok(sg) = service_group_from_str(service_group) {
                 let census_group = self.census_groups
                     .entry(sg.clone())
                     .or_insert(CensusGroup::new(sg, &self.local_member_id));
-                census_group.update_from_service_rumors(rumors);
-            }
-        });
-
-        member_list.with_members(|member| {
-            let health = member_list.health_of(&member).unwrap();
-            for group in self.census_groups.values_mut() {
-                if let Some(census_member) = group.find_member_mut(member.get_id()) {
-                    census_member.update_from_member(&member);
-                    census_member.update_from_health(health);
-                }
+                census_group.update_from_service_rumors_members_and_zones(
+                    rumors,
+                    member_list,
+                    zone_list,
+                    our_zone_id,
+                    updates_for_local_only,
+                );
             }
         });
     }
@@ -371,19 +376,157 @@ impl CensusGroup {
         }
     }
 
-    fn update_from_service_rumors(&mut self, rumors: &HashMap<String, ServiceRumor>) {
+    fn update_from_service_rumors_members_and_zones(
+        &mut self,
+        rumors: &HashMap<String, ServiceRumor>,
+        member_list: &MemberList,
+        zone_list: &ZoneList,
+        our_zone_uuid: BfUuid,
+        updates_for_local_only: bool,
+    ) {
+        if updates_for_local_only {
+            self.update_from_service_rumors_members_and_zones_local_only(rumors);
+        } else {
+            self.update_from_service_rumors_members_and_zones_all(
+                rumors,
+                member_list,
+                zone_list,
+                our_zone_uuid,
+            );
+        }
+    }
+
+    fn update_from_service_rumors_members_and_zones_local_only(
+        &mut self,
+        rumors: &HashMap<String, ServiceRumor>,
+    ) {
         for (member_id, service_rumor) in rumors.iter() {
-            // Yeah - we are ourself - we're alive.
-            let is_self = member_id == &self.local_member_id;
-            let member = self.population
-                .entry(member_id.to_string())
-                .or_insert_with(|| {
-                    // Note: this is where CensusMembers are created
+            if *member_id != self.local_member_id {
+                continue;
+            }
+            let zone_address = None;
+            let named_ports = None;
+            let health = Health::Alive;
+
+            match self.population.entry(member_id.to_string()) {
+                Entry::Occupied(oe) => {
+                    oe.into_mut().update_from_service_rumor(&self.service_group, service_rumor, zone_address, named_ports, health);
+                }
+                Entry::Vacant(ve) => {
                     let mut new_member = CensusMember::default();
-                    new_member.alive = is_self;
-                    new_member
-                });
-            member.update_from_service_rumor(&self.service_group, service_rumor);
+
+                    new_member.update_from_service_rumor(&self.service_group, service_rumor, zone_address, named_ports, health);
+                    ve.insert(new_member);
+                }
+            }
+        }
+    }
+
+    fn update_from_service_rumors_members_and_zones_all(
+        &mut self,
+        rumors: &HashMap<String, ServiceRumor>,
+        member_list: &MemberList,
+        zone_list: &ZoneList,
+        our_zone_uuid: BfUuid,
+    ) {
+        let our_zone_id = our_zone_uuid.to_string();
+        let members = member_list.members.read().expect("Members lock is poisoned");
+        let our_member = match members.get(&self.local_member_id) {
+            Some(member) => member,
+            None => {
+                outputln!("Skippping updating census from service rumors - no our member");
+                // TODO: eh? no our member?
+                return;
+            }
+        };
+
+        for (member_id, service_rumor) in rumors.iter() {
+            let service_member = match members.get(member_id) {
+                Some(member) => member,
+                None => {
+                    outputln!("Skippping updating census from a service rumor - no service member");
+                    self.population.remove(member_id);
+                    continue;
+                }
+            };
+            let service_member_zone_id = BfUuid::parse_or_nil(service_member.get_zone_id(), "zone ID of a member from service rumor");
+            if service_member_zone_id.is_nil() {
+                outputln!("Skippping updating census from a service rumor - invalid or nil zone");
+                self.population.remove(member_id);
+                continue;
+            }
+            let reachable = zone_list.directly_reachable(
+                &our_zone_id,
+                service_member.get_zone_id(),
+                our_member.get_additional_addresses(),
+                service_member.get_additional_addresses(),
+            );
+            let zone_address = match reachable {
+                Reachable::Yes => {
+                    None
+                }
+                Reachable::ThroughOtherZone(zone_id) => {
+                    let mut zone_address_for_zone = None;
+
+                    for zone_address in service_member.get_additional_addresses() {
+                        if zone_address.get_zone_id() == zone_id {
+                            zone_address_for_zone = Some(zone_address);
+                            break;
+                        }
+                    }
+
+                    if zone_address_for_zone.is_none() {
+                        self.population.remove(member_id);
+                        outputln!("Skippping updating census from a service rumor - no zone address for reachable zone");
+                        continue;
+                    }
+
+                    zone_address_for_zone
+                }
+                Reachable::No => {
+                    outputln!("Skippping updating census from a service rumor - service is unreachable");
+                    self.population.remove(member_id);
+                    continue;
+                }
+            };
+            let named_ports = {
+                if let Some(ref za) = zone_address {
+                    let tag = za.get_tag();
+                    let mut our_named_ports = None;
+
+                    for tagged_ports in service_rumor.get_ports().iter() {
+                        if tag == tagged_ports.get_tag() {
+                            our_named_ports = Some(tagged_ports.get_named_ports());
+                            break;
+                        }
+                    }
+
+                    if our_named_ports.is_none() {
+                        outputln!("Skippping updating census from a service rumor - no ports under expected tag");
+                        self.population.remove(member_id);
+                        continue;
+                    }
+
+                    our_named_ports
+                } else {
+                    None
+                }
+            };
+            // krnowak: other code was using unwrap, so I assume it's
+            // fine to use it here. Hopefully it won't panic.
+            let health = member_list.health_of(&service_member).unwrap();
+
+            match self.population.entry(member_id.to_string()) {
+                Entry::Occupied(oe) => {
+                    oe.into_mut().update_from_service_rumor(&self.service_group, service_rumor, zone_address, named_ports, health);
+                }
+                Entry::Vacant(ve) => {
+                    let mut new_member = CensusMember::default();
+
+                    new_member.update_from_service_rumor(&self.service_group, service_rumor, zone_address, named_ports, health);
+                    ve.insert(new_member);
+                }
+            }
         }
     }
 
@@ -475,10 +618,6 @@ impl CensusGroup {
         }
     }
 
-    fn find_member_mut(&mut self, member_id: &str) -> Option<&mut CensusMember> {
-        self.population.get_mut(member_id)
-    }
-
     /// Determine what configuration keys the group as a whole
     /// exports. Returns a set of the top-level exported keys.
     ///
@@ -538,7 +677,14 @@ pub struct CensusMember {
 }
 
 impl CensusMember {
-    fn update_from_service_rumor(&mut self, sg: &ServiceGroup, rumor: &ServiceRumor) {
+    fn update_from_service_rumor(
+        &mut self,
+        sg: &ServiceGroup,
+        rumor: &ServiceRumor,
+        zone_address: Option<&ZoneAddress>,
+        named_ports: Option<&[NamedPort]>,
+        health: Health,
+    ) {
         self.member_id = String::from(rumor.get_member_id());
         self.service = sg.service().to_string();
         self.group = sg.group().to_string();
@@ -553,8 +699,55 @@ impl CensusMember {
             Ok(ident) => self.pkg = Some(ident),
             Err(err) => warn!("Received a bad package ident from gossip data, err={}", err),
         };
+        self.setup_sys(rumor, &zone_address);
+        self.setup_cfg(rumor, &named_ports);
+        self.persistent = true;
+        self.update_from_health(health);
+    }
+
+    fn update_from_health(&mut self, health: Health) {
+        self.alive = false;
+        self.suspect = false;
+        self.confirmed = false;
+        self.departed = false;
+        match health {
+            Health::Alive => self.alive = true,
+            Health::Suspect => self.suspect = true,
+            Health::Confirmed => self.confirmed = true,
+            Health::Departed => self.departed = true,
+        }
+    }
+
+    fn setup_sys(&mut self, rumor: &ServiceRumor, zone_address: &Option<&ZoneAddress>) {
         self.sys = rumor.get_sys().clone().into();
+        if let Some(ref za) = zone_address {
+            self.sys.set_ip(za.get_address().to_string());
+            // TODO(krnowak): What about hostname? Clear it?
+            self.sys.set_gossip_ip(za.get_address().to_string());
+            self.sys.set_gossip_port(za.get_gossip_port() as u32);
+            // TODO(krnowak): What about http/ctl gateway address and port?
+        }
+    }
+
+    fn setup_cfg(&mut self, rumor: &ServiceRumor, named_ports: &Option<&[NamedPort]>) {
         self.cfg = toml::from_slice(rumor.get_cfg()).unwrap_or(toml::value::Table::default());
+        if let Some(np) = named_ports {
+            for named_port in np.iter() {
+                if let Some(ref mut value) = self.cfg.get_mut(named_port.get_name()) {
+                    match value {
+                        toml::value::Value::String(ref mut s) => {
+                            *s = format!("{}", named_port.get_port());
+                        }
+                        toml::value::Value::Integer(ref mut i) => {
+                            *i = named_port.get_port() as i64;
+                        }
+                        _ => {
+                            // TODO(krnowak): Warn?
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn update_from_election_rumor(&mut self, election: &ElectionRumor) -> bool {
@@ -589,25 +782,6 @@ impl CensusMember {
         self.update_leader
     }
 
-    fn update_from_member(&mut self, member: &Member) {
-        self.sys.set_gossip_ip(member.get_address().to_string());
-        self.sys.set_gossip_port(member.get_gossip_port() as u32);
-        self.persistent = true;
-    }
-
-    fn update_from_health(&mut self, health: Health) {
-        self.alive = false;
-        self.suspect = false;
-        self.confirmed = false;
-        self.departed = false;
-        match health {
-            Health::Alive => self.alive = true,
-            Health::Suspect => self.suspect = true,
-            Health::Confirmed => self.confirmed = true,
-            Health::Departed => self.departed = true,
-        }
-    }
-
     /// Is this member currently considered to be alive or not?
     pub fn alive(&self) -> bool {
         self.alive
@@ -639,8 +813,10 @@ fn service_group_from_str(sg: &str) -> Result<ServiceGroup, hcore::Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
-    use butterfly::member::{Health, MemberList};
+    use butterfly::member::{Health, Member, MemberList};
     use butterfly::rumor::election::Election as ElectionRumor;
     use butterfly::rumor::election::ElectionUpdate as ElectionUpdateRumor;
     use butterfly::rumor::service::Service as ServiceRumor;
@@ -648,8 +824,11 @@ mod tests {
     use butterfly::rumor::service_config::ServiceConfig as ServiceConfigRumor;
     use butterfly::rumor::service_file::ServiceFile as ServiceFileRumor;
     use butterfly::rumor::RumorStore;
+    use butterfly::zone::{Zone, ZoneList};
     use hcore::package::ident::PackageIdent;
     use hcore::service::ServiceGroup;
+
+    use toml;
 
     #[test]
     fn update_from_rumors() {
@@ -667,15 +846,16 @@ mod tests {
             Some("20170419115548"),
         );
         let sg_one = ServiceGroup::new(None, "shield", "one", None).unwrap();
+        let tagged_ports = HashMap::new();
 
         let service_store: RumorStore<ServiceRumor> = RumorStore::default();
         let service_one =
-            ServiceRumor::new("member-a".to_string(), &pg_id, &sg_one, &sys_info, None);
+            ServiceRumor::new("member-a".to_string(), &pg_id, &sg_one, &sys_info, None, &tagged_ports);
         let sg_two = ServiceGroup::new(None, "shield", "two", None).unwrap();
         let service_two =
-            ServiceRumor::new("member-b".to_string(), &pg_id, &sg_two, &sys_info, None);
+            ServiceRumor::new("member-b".to_string(), &pg_id, &sg_two, &sys_info, None, &tagged_ports);
         let service_three =
-            ServiceRumor::new("member-a".to_string(), &pg_id, &sg_two, &sys_info, None);
+            ServiceRumor::new("member-a".to_string(), &pg_id, &sg_two, &sys_info, None, &tagged_ports);
 
         service_store.insert(service_one);
         service_store.insert(service_two);
@@ -692,6 +872,22 @@ mod tests {
         election_update_store.insert(election_update);
 
         let member_list = MemberList::new();
+        let mut zone_list = ZoneList::new();
+        let zone_uuid = BfUuid::generate();
+        let zone = Zone::new(zone_uuid.to_string(), "member-a".to_string());
+        let mut member_a = Member::default();
+
+        member_a.set_id("member-a".to_string());
+        member_a.set_zone_id(zone_uuid.to_string());
+
+        let mut member_b = Member::default();
+
+        member_b.set_id("member-b".to_string());
+        member_b.set_zone_id(zone_uuid.to_string());
+
+        member_list.insert(member_a, Health::Alive);
+        member_list.insert(member_b, Health::Alive);
+        zone_list.insert(zone);
 
         let service_config_store: RumorStore<ServiceConfigRumor> = RumorStore::default();
         let service_file_store: RumorStore<ServiceFileRumor> = RumorStore::default();
@@ -703,6 +899,7 @@ mod tests {
             &member_list,
             &service_config_store,
             &service_file_store,
+            &zone_list,
         );
         let census_group_one = ring.census_group_for(&sg_one).unwrap();
         assert!(census_group_one.me().is_none());
@@ -722,6 +919,135 @@ mod tests {
         let members = census_group_two.members();
         assert_eq!(members[0].member_id, "member-a");
         assert_eq!(members[1].member_id, "member-b");
+    }
+
+    #[test]
+    fn update_from_rumors_from_different_zone() {
+        let mut sys_info_inside = SysInfo::new();
+        sys_info_inside.set_ip("4.3.2.1".to_string());
+        sys_info_inside.set_hostname("inside".to_string());
+        sys_info_inside.set_gossip_ip("0.0.0.0".to_string());
+        sys_info_inside.set_gossip_port(7777);
+        sys_info_inside.set_http_gateway_ip("0.0.0.0".to_string());
+        sys_info_inside.set_http_gateway_port(9631);
+
+        let pg_id = PackageIdent::new(
+            "starkandwayne",
+            "shield",
+            Some("0.10.4"),
+            Some("20170419115548"),
+        );
+        let sg = ServiceGroup::new(None, "shield", "one", None).unwrap();
+        let mut tagged_ports = HashMap::new();
+        let mut named_ports = HashMap::new();
+
+        named_ports.insert("port".to_string(), 12345);
+        named_ports.insert("ssl-port".to_string(), 54321);
+        tagged_ports.insert("tag".to_string(), named_ports);
+
+        let service_store: RumorStore<ServiceRumor> = RumorStore::default();
+        let mut cfg = BTreeMap::new();
+
+        cfg.insert("port".to_string(), toml::value::Value::Integer(1234));
+        cfg.insert("ssl-port".to_string(), toml::value::Value::String("4321".to_string()));
+        cfg.insert("foo".to_string(), toml::value::Value::Boolean(true));
+
+        let service_inside = ServiceRumor::new(
+            "member-inside".to_string(),
+            &pg_id,
+            &sg,
+            &sys_info_inside,
+            Some(&cfg),
+            &tagged_ports
+        );
+
+        service_store.insert(service_inside);
+
+        let election_store: RumorStore<ElectionRumor> = RumorStore::default();
+        let mut election = ElectionRumor::new("member-inside", sg.clone(), 10);
+        election.finish();
+        election_store.insert(election);
+
+        let election_update_store: RumorStore<ElectionUpdateRumor> = RumorStore::default();
+        let mut election_update = ElectionUpdateRumor::new("member-inside", sg.clone(), 10);
+        election_update.finish();
+        election_update_store.insert(election_update);
+
+        let member_list = MemberList::new();
+        let mut zone_list = ZoneList::new();
+        let zone_uuid_outside = BfUuid::generate();
+        let zone_uuid_inside = BfUuid::generate();
+        let mut zone_outside = Zone::new(zone_uuid_outside.to_string(), "member-outside".to_string());
+        let mut zone_inside = Zone::new(zone_uuid_inside.to_string(), "member-inside".to_string());
+
+        zone_outside.mut_child_zone_ids().push(zone_uuid_inside.to_string());
+        zone_inside.set_parent_zone_id(zone_uuid_outside.to_string());
+
+        let mut member_outside = Member::default();
+
+        member_outside.set_id("member-outside".to_string());
+        member_outside.set_zone_id(zone_uuid_outside.to_string());
+
+        let mut member_inside = Member::default();
+        let mut zone_address = ZoneAddress::new();
+
+        zone_address.set_zone_id(zone_uuid_outside.to_string());
+        zone_address.set_address("1.2.3.4".to_string());
+        zone_address.set_swim_port(33333);
+        zone_address.set_gossip_port(44444);
+        zone_address.set_tag("tag".to_string());
+
+        member_inside.set_id("member-inside".to_string());
+        member_inside.set_zone_id(zone_uuid_inside.to_string());
+        member_inside.mut_additional_addresses().push(zone_address);
+
+        member_list.insert(member_outside, Health::Alive);
+        member_list.insert(member_inside, Health::Alive);
+        zone_list.insert(zone_outside);
+        zone_list.insert(zone_inside);
+
+        let service_config_store: RumorStore<ServiceConfigRumor> = RumorStore::default();
+        let service_file_store: RumorStore<ServiceFileRumor> = RumorStore::default();
+        let mut ring = CensusRing::new("member-outside".to_string());
+
+        ring.update_from_rumors(
+            &service_store,
+            &election_store,
+            &election_update_store,
+            &member_list,
+            &service_config_store,
+            &service_file_store,
+            &zone_list,
+        );
+        let census_group = ring.census_group_for(&sg).unwrap();
+        assert!(census_group.me().is_none());
+        assert_eq!(census_group.leader().unwrap().member_id, "member-inside");
+        assert_eq!(census_group.update_leader().unwrap().member_id, "member-inside");
+
+        let test_member_inside = census_group.members()[0];
+
+        assert_eq!(test_member_inside.member_id, "member-inside");
+        // take the address from zone address, not from sys
+        assert_eq!(test_member_inside.sys.get_ip(), "1.2.3.4");
+        // same for gossip ip
+        assert_eq!(test_member_inside.sys.get_gossip_ip(), "1.2.3.4");
+        // same for gossip port
+        assert_eq!(test_member_inside.sys.get_gossip_port(), 44444);
+        // check if configuration was changed accordingly
+        assert_eq!(test_member_inside.cfg.len(), 3);
+        assert_eq!(
+            *test_member_inside.cfg.get("port").unwrap(),
+            toml::value::Value::Integer(12345)
+        );
+        assert_eq!(
+            *test_member_inside.cfg.get("ssl-port").unwrap(),
+            toml::value::Value::String("54321".to_string())
+        );
+        // foo setting should be left intact
+        assert_eq!(
+            *test_member_inside.cfg.get("foo").unwrap(),
+            toml::value::Value::Boolean(true)
+        );
     }
 
     /// Create a bare-minimum CensusMember with the given Health
