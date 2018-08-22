@@ -30,10 +30,13 @@ use serde::{Serialize, Serializer};
 use time::SteadyTime;
 
 use error::Error;
-use message::{BfUuid,
-              swim::{Member as ProtoMember, Membership as ProtoMembership,
-                     Membership_Health as ProtoMembership_Health, Rumor_Type},
-              UuidSimple};
+use message::{
+    swim::{
+        Member as ProtoMember, Membership as ProtoMembership,
+        Membership_Health as ProtoMembership_Health, Rumor_Type,
+    },
+    BfUuid, UuidSimple,
+};
 use network::{AddressAndPort, MyFromStr};
 use rumor::RumorKey;
 
@@ -144,7 +147,12 @@ impl Member {
             for zone_address in self.get_additional_addresses() {
                 if zone_address.get_zone_id() == zone_id {
                     match T::Address::create_from_str(zone_address.get_address()) {
-                        Ok(addr) => return Some(T::new_from_address_and_port(addr, zone_address.get_swim_port() as u16)),
+                        Ok(addr) => {
+                            return Some(T::new_from_address_and_port(
+                                addr,
+                                zone_address.get_swim_port() as u16,
+                            ))
+                        }
                         Err(e) => {
                             panic!("Cannot parse member {:?} additional address: {}", self, e);
                         }
@@ -610,7 +618,8 @@ impl MemberList {
         for member in members
             .into_iter()
             .filter(|m| {
-                m.get_id() != sending_member_id && m.get_id() != target_member_id
+                m.get_id() != sending_member_id
+                    && m.get_id() != target_member_id
                     && self.check_health_of_by_id(m.get_id(), Health::Alive)
             })
             .take(PINGREQ_TARGETS)
@@ -732,7 +741,7 @@ impl MemberList {
 mod tests {
     mod member {
         use member::Member;
-        use message::{BfUuid, swim};
+        use message::{swim, BfUuid};
 
         // Sets the uuid to simple, and the incarnation to zero.
         #[test]

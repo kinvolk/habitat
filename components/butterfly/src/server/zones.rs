@@ -17,13 +17,15 @@
 //! Used from the inbound thread.
 
 use std::cmp::Ordering as CmpOrdering;
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 use protobuf::RepeatedField;
 
 use member::Member;
-use message::{BfUuid, swim::{Member as ProtoMember, Swim_Type, Zone as ProtoZone, ZoneAddress, ZoneChange}};
-use network::{Network};
+use message::{
+    swim::{Member as ProtoMember, Swim_Type, Zone as ProtoZone, ZoneAddress, ZoneChange}, BfUuid,
+};
+use network::Network;
 use zone::Zone;
 
 #[derive(Debug, Default)]
@@ -100,7 +102,7 @@ impl Default for AddressKind {
 
 #[derive(Debug)]
 pub struct HandleZoneData<'a, N: Network> {
-    pub zones: &'a[ProtoZone],
+    pub zones: &'a [ProtoZone],
     pub from_member: &'a ProtoMember,
     pub to_member: &'a ProtoMember,
     pub addr: <N as Network>::AddressAndPort,
@@ -127,7 +129,7 @@ pub enum HandleZoneResults {
     SendAck,
     // naming is hard…
     Stuff(HandleZoneResultsStuff),
-    ZoneProcessed(ZoneChangeResults)
+    ZoneProcessed(ZoneChangeResults),
 }
 
 impl Default for HandleZoneResults {
@@ -141,7 +143,7 @@ pub fn process_zone_change_internal_state(
     mut maybe_successor_of_maintained_zone_clone: Option<ProtoZone>,
     mut our_zone_uuid: BfUuid,
     mut zone_change: ZoneChange,
-    dbg_data: &mut ZoneChangeDbgData
+    dbg_data: &mut ZoneChangeDbgData,
 ) -> ZoneChangeResults {
     let mut results = ZoneChangeResults::default();
     let maintained_zone_uuid = BfUuid::must_parse(maintained_zone_clone.get_id());
@@ -151,7 +153,10 @@ pub fn process_zone_change_internal_state(
     let mut dbg_added_predecessors = Vec::new();
 
     results.original_maintained_zone = maintained_zone_clone.clone();
-    match (maintained_zone_clone.has_successor(), maybe_successor_of_maintained_zone_clone.is_some()) {
+    match (
+        maintained_zone_clone.has_successor(),
+        maybe_successor_of_maintained_zone_clone.is_some(),
+    ) {
         (true, true) | (false, false) => (),
         (true, false) => {
             dbg_data.borked_successor_state = Some(true);
@@ -171,7 +176,12 @@ pub fn process_zone_change_internal_state(
     dbg_data.our_old_successor = Some(maintained_zone_clone.get_successor().to_string());
     dbg_data.our_old_member_zone_id = Some(our_zone_uuid.to_string());
 
-    results.zones_to_insert = zone_change.get_new_aliases().iter().cloned().map(|pz| pz.into()).collect();
+    results.zones_to_insert = zone_change
+        .get_new_aliases()
+        .iter()
+        .cloned()
+        .map(|pz| pz.into())
+        .collect();
 
     let mut new_aliases = zone_change.take_new_aliases().into_vec();
 
@@ -227,7 +237,9 @@ pub fn process_zone_change_internal_state(
 
                         abridged_successor.set_id(alias_uuid.to_string());
                         abridged_successor.set_successor(new_successor.get_id().to_string());
-                        abridged_successor.set_predecessors(RepeatedField::from_vec(new_successor.get_predecessors().to_vec()));
+                        abridged_successor.set_predecessors(RepeatedField::from_vec(
+                            new_successor.get_predecessors().to_vec(),
+                        ));
 
                         ve.insert(abridged_successor);
                     }
@@ -257,7 +269,9 @@ pub fn process_zone_change_internal_state(
 
                 let predecessor_uuid = BfUuid::must_parse(predecessor.get_id());
 
-                results.predecessors_to_add_to_maintained_zone.insert(predecessor.get_id().to_string());
+                results
+                    .predecessors_to_add_to_maintained_zone
+                    .insert(predecessor.get_id().to_string());
                 match aliases_to_maybe_inform.entry(predecessor_uuid) {
                     Entry::Occupied(_) => (),
                     Entry::Vacant(ve) => {

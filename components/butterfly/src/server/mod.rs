@@ -24,8 +24,8 @@ mod inbound;
 mod outbound;
 mod pull;
 mod push;
-mod zones;
 pub mod timing;
+mod zones;
 
 use std::collections::HashSet;
 use std::ffi;
@@ -1046,9 +1046,7 @@ impl<N: Network> Server<N> {
 
     pub fn get_settled_zone_id(&self) -> UuidSimple {
         if self.is_zone_settled() {
-            self.read_member()
-                .get_zone_id()
-                .to_owned()
+            self.read_member().get_zone_id().to_owned()
         } else {
             BfUuid::nil().to_string()
         }
@@ -1153,7 +1151,9 @@ mod tests {
             member.set_swim_port(swim_port as i32);
             member.set_gossip_port(gossip_port as i32);
             let network = RealNetwork::new_for_server(swim_listen, gossip_listen);
-            let host_address = network.get_host_address().expect("Cannot get real host address");
+            let host_address = network
+                .get_host_address()
+                .expect("Cannot get real host address");
             Server::new(
                 network,
                 host_address,

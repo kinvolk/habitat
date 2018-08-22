@@ -27,7 +27,9 @@ use protobuf::{Message, RepeatedField};
 use time::SteadyTime;
 
 use member::{Health, Member};
-use message::swim::{Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type, ZoneChange};
+use message::swim::{
+    Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type, ZoneChange,
+};
 use network::{AddressAndPort, Network, SwimSender};
 use rumor::RumorKey;
 use server::timing::Timing;
@@ -170,8 +172,7 @@ impl<N: Network> Outbound<N> {
              reachable: {}\n\
              {:#?}\n\
              =================",
-            reachable,
-            dbg,
+            reachable, dbg,
         );
 
         reachable
@@ -180,8 +181,16 @@ impl<N: Network> Outbound<N> {
     fn directly_reachable_internal(&self, member: &Member, dbg: &mut ReachableDbg) -> bool {
         dbg.our_member = self.server.read_member().clone();
         dbg.their_member = member.clone();
-        dbg.our_zone = self.server.read_zone_list().zones.get(dbg.our_member.get_zone_id()).cloned();
-        dbg.their_zone = self.server.read_zone_list().zones.get(dbg.their_member.get_zone_id()).cloned();
+        dbg.our_zone = self.server
+            .read_zone_list()
+            .zones
+            .get(dbg.our_member.get_zone_id())
+            .cloned();
+        dbg.their_zone = self.server
+            .read_zone_list()
+            .zones
+            .get(dbg.their_member.get_zone_id())
+            .cloned();
 
         let our_zone_id = self.server.read_member().get_zone_id().to_string();
         let their_zone_id = member.get_zone_id();
@@ -281,7 +290,9 @@ impl<N: Network> Outbound<N> {
     ///
     /// If we don't receive anything at all in the Ping/PingReq loop, we mark the member as Suspect.
     fn probe(&mut self, member: Member) {
-        let addr = if let Some(addr) = member.swim_socket_address_for_zone(self.server.read_member().get_zone_id()) {
+        let addr = if let Some(addr) =
+            member.swim_socket_address_for_zone(self.server.read_member().get_zone_id())
+        {
             addr
         } else {
             member.swim_socket_address()
@@ -444,7 +455,11 @@ pub fn populate_membership_rumors<N: Network>(
     // Always include zone information of the sender
     let zone_settled = *(server.read_zone_settled());
     if zone_settled && !our_own_zone_gossiped {
-        if let Some(zone) = server.read_zone_list().zones.get(&server.get_settled_zone_id()) {
+        if let Some(zone) = server
+            .read_zone_list()
+            .zones
+            .get(&server.get_settled_zone_id())
+        {
             zone_entries.push(zone.proto.clone());
         }
     }
@@ -711,17 +726,8 @@ pub fn zone_change<N: Network>(
     let addr = target.swim_socket_address();
 
     match swim_sender.send(&payload, addr) {
-        Ok(_s) => trace!(
-            "Sent zone change to {}@{}",
-            target.get_id(),
-            addr
-        ),
-        Err(e) => error!(
-            "Failed zone change to {}@{}: {}",
-            target.get_id(),
-            addr,
-            e
-        ),
+        Ok(_s) => trace!("Sent zone change to {}@{}", target.get_id(), addr),
+        Err(e) => error!("Failed zone change to {}@{}: {}", target.get_id(), addr, e),
     }
     trace_it!(
         SWIM: server,

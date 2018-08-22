@@ -20,8 +20,10 @@ use std::ops::{Deref, DerefMut};
 
 use protobuf::RepeatedField;
 
-use message::{swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumorType, Zone as ProtoZone},
-              BfUuid, UuidSimple};
+use message::{
+    swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumorType, Zone as ProtoZone}, BfUuid,
+    UuidSimple,
+};
 use rumor::RumorKey;
 
 /// A zone in the swim group. Passes most of its functionality along
@@ -114,10 +116,7 @@ impl ZoneList {
     }
 
     pub fn available_zone_ids(&self) -> Vec<UuidSimple> {
-        self.zones
-            .keys()
-            .cloned()
-            .collect()
+        self.zones.keys().cloned().collect()
     }
 
     pub fn insert(&mut self, mut zone: Zone) -> Vec<RumorKey> {
@@ -148,7 +147,8 @@ impl ZoneList {
                 match (zone.has_successor(), current_zone.has_successor()) {
                     (true, true) => {
                         let successor_uuid = BfUuid::must_parse(zone.get_successor());
-                        let current_successor_uuid = BfUuid::must_parse(current_zone.get_successor());
+                        let current_successor_uuid =
+                            BfUuid::must_parse(current_zone.get_successor());
 
                         match successor_uuid.cmp(&current_successor_uuid) {
                             Ordering::Greater => {
@@ -161,16 +161,19 @@ impl ZoneList {
                             }
                         }
                     }
-                    (true, false) => {
-                    }
+                    (true, false) => {}
                     (false, true) => {
                         zone.set_successor(current_zone.get_successor().to_string());
                     }
-                    (false, false) => {
-                    }
+                    (false, false) => {}
                 }
 
-                predecessors.extend(current_zone.get_predecessors().iter().map(|z| z.to_string()));
+                predecessors.extend(
+                    current_zone
+                        .get_predecessors()
+                        .iter()
+                        .map(|z| z.to_string()),
+                );
                 predecessors.extend(zone.get_predecessors().iter().map(|z| z.to_string()));
 
                 zone.set_predecessors(predecessors.drain().collect());
@@ -188,7 +191,11 @@ impl ZoneList {
         if zone.has_successor() {
             aliases.insert(BfUuid::must_parse(zone.get_successor()));
         }
-        aliases.extend(zone.get_predecessors().iter().map(|i| BfUuid::must_parse(i)));
+        aliases.extend(
+            zone.get_predecessors()
+                .iter()
+                .map(|i| BfUuid::must_parse(i)),
+        );
 
         queue.extend(aliases.iter().cloned());
 
@@ -207,7 +214,11 @@ impl ZoneList {
                     queue.push_back(successor);
                 }
 
-                let predecessors = other_zone.get_predecessors().iter().map(|i| BfUuid::must_parse(i)).collect::<Vec<_>>();
+                let predecessors = other_zone
+                    .get_predecessors()
+                    .iter()
+                    .map(|i| BfUuid::must_parse(i))
+                    .collect::<Vec<_>>();
 
                 aliases.extend(predecessors.iter());
                 queue.extend(predecessors);
@@ -218,7 +229,10 @@ impl ZoneList {
             Some(id) => *id,
             None => return vec![RumorKey::from(&zone)],
         };
-        let predecessors = aliases.drain().filter(|i| *i < successor).collect::<Vec<BfUuid>>();
+        let predecessors = aliases
+            .drain()
+            .filter(|i| *i < successor)
+            .collect::<Vec<BfUuid>>();
         let mut rumor_keys = Vec::new();
 
         for zone_uuid in visited.drain() {
@@ -243,17 +257,28 @@ impl ZoneList {
                 changed = true;
             }
 
-            let mut filtered_predecessors = predecessors.iter()
+            let mut filtered_predecessors = predecessors
+                .iter()
                 .filter(|uuid| **uuid != zone_uuid)
                 .cloned()
                 .collect::<HashSet<BfUuid>>();
-            let old_predecessors = other_zone.get_predecessors()
+            let old_predecessors = other_zone
+                .get_predecessors()
                 .iter()
                 .map(|i| BfUuid::must_parse(i))
-                .collect::<HashSet<BfUuid >>();
+                .collect::<HashSet<BfUuid>>();
 
-            if filtered_predecessors.difference(&old_predecessors).next().is_some() {
-                other_zone.set_predecessors(RepeatedField::from_vec(filtered_predecessors.drain().map(|uuid| uuid.to_string()).collect()));
+            if filtered_predecessors
+                .difference(&old_predecessors)
+                .next()
+                .is_some()
+            {
+                other_zone.set_predecessors(RepeatedField::from_vec(
+                    filtered_predecessors
+                        .drain()
+                        .map(|uuid| uuid.to_string())
+                        .collect(),
+                ));
                 changed = true;
             }
 

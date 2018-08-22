@@ -14,7 +14,7 @@
 
 pub mod swim;
 
-use std::fmt::{Display, Result as FmtResult, Formatter};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::result;
 use std::str::{self, FromStr};
 
@@ -30,14 +30,12 @@ use protobuf::{self, Message};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BfUuid {
-    uuid: Uuid
+    uuid: Uuid,
 }
 
 impl BfUuid {
     pub fn nil() -> Self {
-        Self {
-            uuid: Uuid::nil(),
-        }
+        Self { uuid: Uuid::nil() }
     }
 
     pub fn generate() -> Self {
@@ -78,9 +76,7 @@ impl FromStr for BfUuid {
     type Err = ParseError;
 
     fn from_str(s: &str) -> result::Result<Self, Self::Err> {
-        Ok(Self {
-            uuid: s.parse()?,
-        })
+        Ok(Self { uuid: s.parse()? })
     }
 }
 
