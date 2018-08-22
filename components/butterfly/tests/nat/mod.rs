@@ -18,8 +18,8 @@ use std::u8;
 
 use habitat_butterfly::error::{Error, Result};
 use habitat_butterfly::member::{Health, Member};
-use habitat_butterfly::network::{AddressAndPort, GossipReceiver, GossipSender, MyFromStr, Network,
-                                 SwimReceiver, SwimSender};
+use habitat_butterfly::network::{Address, AddressAndPort, GossipReceiver, GossipSender, MyFromStr,
+                                 Network, SwimReceiver, SwimSender};
 use habitat_butterfly::server::timing::Timing;
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::trace::Trace;
@@ -910,6 +910,9 @@ impl MyFromStr for TestAddr {
     type MyErr = <Self as FromStr>::Err;
 }
 
+impl Address for TestAddr {
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 struct TestAddrAndPort {
     addr: TestAddr,
@@ -1591,8 +1594,10 @@ impl TestNetworkSwitchBoard {
         let name = None;
         let data_path = None::<PathBuf>;
         let suitability = Box::new(TestSuitability(idx));
+        let host_address = network.get_host_address().expect("failed to get host address");
         let mut butterfly = Server::new(
             network,
+            host_address,
             member,
             trace,
             ring_key,
@@ -1969,6 +1974,10 @@ impl Network for TestNetwork {
     type SwimReceiver = TestSwimReceiver;
     type GossipSender = TestGossipSender;
     type GossipReceiver = TestGossipReceiver;
+
+    fn get_host_address(&self) -> Result<TestAddr> {
+        Ok(self.addr.get_address())
+    }
 
     fn get_swim_addr(&self) -> TestAddrAndPort {
         self.addr
