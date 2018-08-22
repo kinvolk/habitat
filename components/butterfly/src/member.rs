@@ -34,6 +34,7 @@ use message::{
     swim::{
         Member as ProtoMember, Membership as ProtoMembership,
         Membership_Health as ProtoMembership_Health, Rumor_Type,
+        ZoneAddress,
     },
     BfUuid, UuidSimple,
 };
@@ -124,6 +125,37 @@ impl fmt::Display for Health {
     }
 }
 
+trait PortGetter {
+    fn get_port_from_zone_address(&self, zone_address: &ZoneAddress) -> u16;
+    fn get_port_from_member(&self, member: &Member) -> u16;
+}
+
+#[derive(Copy, Clone)]
+struct SWIMPortGetter {}
+
+impl PortGetter for SWIMPortGetter {
+    fn get_port_from_zone_address(&self, zone_address: &ZoneAddress) -> u16 {
+        zone_address.get_swim_port() as u16
+    }
+
+    fn get_port_from_member(&self, member: &Member) -> u16 {
+        member.get_swim_port() as u16
+    }
+}
+
+#[derive(Copy, Clone)]
+struct GossipPortGetter {}
+
+impl PortGetter for GossipPortGetter {
+    fn get_port_from_zone_address(&self, zone_address: &ZoneAddress) -> u16 {
+        zone_address.get_gossip_port() as u16
+    }
+
+    fn get_port_from_member(&self, member: &Member) -> u16 {
+        member.get_gossip_port() as u16
+    }
+}
+
 /// A member in the swim group. Passes most of its functionality along to the internal protobuf
 /// representation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -139,53 +171,7 @@ impl Member {
     /// This function panics if the address is un-parseable. In practice, it shouldn't be
     /// un-parseable, since its set from the inbound socket directly.
     pub fn swim_socket_address<T: AddressAndPort>(&self) -> T {
-        self.socket_address(self.get_swim_port())
-    }
-
-    pub fn swim_socket_address_for_zone<T: AddressAndPort>(&self, zone_id: &str) -> Option<T> {
-        if zone_id != self.get_zone_id() {
-            for zone_address in self.get_additional_addresses() {
-                if zone_address.get_zone_id() == zone_id {
-                    match T::Address::create_from_str(zone_address.get_address()) {
-                        Ok(addr) => {
-                            return Some(T::new_from_address_and_port(
-                                addr,
-                                zone_address.get_swim_port() as u16,
-                            ))
-                        }
-                        Err(e) => {
-                            panic!("Cannot parse member {:?} additional address: {}", self, e);
-                        }
-                    }
-                }
-            }
-
-            return None;
-        }
-        Some(self.swim_socket_address())
-    }
-
-    pub fn gossip_socket_address_for_zone<T: AddressAndPort>(&self, zone_id: &str) -> Option<T> {
-        if zone_id != self.get_zone_id() {
-            for zone_address in self.get_additional_addresses() {
-                if zone_address.get_zone_id() == zone_id {
-                    match T::Address::create_from_str(zone_address.get_address()) {
-                        Ok(addr) => {
-                            return Some(T::new_from_address_and_port(
-                                addr,
-                                zone_address.get_gossip_port() as u16,
-                            ))
-                        }
-                        Err(e) => {
-                            panic!("Cannot parse member {:?} additional address: {}", self, e);
-                        }
-                    }
-                }
-            }
-
-            return None;
-        }
-        Some(self.gossip_socket_address())
+        self.socket_address(SWIMPortGetter{})
     }
 
     /// Returns the gossip socket address of this member.
@@ -195,19 +181,60 @@ impl Member {
     /// This function panics if the address is un-parseable. In practice, it shouldn't be
     /// un-parseable, since its set from the inbound socket directly.
     pub fn gossip_socket_address<T: AddressAndPort>(&self) -> T {
-        self.socket_address(self.get_gossip_port())
+        self.socket_address(GossipPortGetter{})
     }
 
-    fn socket_address<T>(&self, port: i32) -> T
+    pub fn swim_socket_address_for_zone<T: AddressAndPort>(&self, zone_id: &str) -> Option<T> {
+        self.socket_address_for_zone(zone_id, SWIMPortGetter{})
+    }
+
+    pub fn gossip_socket_address_for_zone<T: AddressAndPort>(&self, zone_id: &str) -> Option<T> {
+        self.socket_address_for_zone(zone_id, GossipPortGetter{})
+    }
+
+    fn socket_address<T, P>(&self, port_getter: P) -> T
     where
         T: AddressAndPort,
+        P: PortGetter,
     {
         match T::Address::create_from_str(self.get_address()) {
-            Ok(addr) => T::new_from_address_and_port(addr, port as u16),
+            Ok(addr) => T::new_from_address_and_port(addr, port_getter.get_port_from_member(&self)),
             Err(e) => {
                 panic!("Cannot parse member {:?} address: {}", self, e);
             }
         }
+    }
+
+    fn socket_address_for_zone<T, P>(&self, zone_id: &str, port_getter: P) -> Option<T>
+    where T: AddressAndPort,
+          P: PortGetter,
+    {
+        if zone_id == self.get_zone_id() {
+            return Some(self.socket_address(port_getter));
+        }
+
+        for zone_address in self.get_additional_addresses() {
+            if zone_address.get_zone_id() != zone_id {
+                continue;
+            }
+            if !zone_address.has_address() {
+                break;
+            }
+            match T::Address::create_from_str(zone_address.get_address()) {
+                Ok(addr) => {
+                    return Some(T::new_from_address_and_port(
+                        addr,
+                        port_getter.get_port_from_zone_address(&zone_address),
+                    ))
+                }
+                Err(e) => {
+                    error!("Cannot parse member {:?} additional address: {}", self, e);
+                    break;
+                }
+            }
+        }
+
+        return None;
     }
 }
 

@@ -114,6 +114,12 @@ pub struct HandleZoneData<'a, N: Network> {
     pub sender_in_the_same_zone_as_us: bool,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum ZoneRelative {
+    Child,
+    Parent,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct HandleZoneResultsStuff {
     pub new_maintained_zone: Option<Zone>,
@@ -122,6 +128,7 @@ pub struct HandleZoneResultsStuff {
     pub call_ack: bool,
     pub sender_has_nil_zone: bool,
     pub msg_and_target: Option<(ZoneChange, Member)>,
+    pub sender_relative: Option<(BfUuid, ZoneRelative)>,
 }
 
 #[derive(Clone, Debug)]
