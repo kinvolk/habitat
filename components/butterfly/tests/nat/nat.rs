@@ -32,7 +32,9 @@ fn servers_establish_the_same_zone_many() {
     server0.talk_to(vec![&server1, &server2, &server3]);
     server2.talk_to(vec![&server3, &server4, &server5]);
     assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_same_settled_zone(vec![&server0, &server1, &server2, &server3, &server4, &server5]));
+    assert!(switch_board.wait_for_same_settled_zone(vec![
+        &server0, &server1, &server2, &server3, &server4, &server5,
+    ]));
 }
 
 #[test]
@@ -82,10 +84,10 @@ fn different_zones_get_different_ids_few() {
     nat.make_route(hole0, child_server0.addr);
     parent_server0.talk_to(vec![&hole0]);
     assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_disjoint_settled_zones(vec![
-        vec![&parent_server0],
-        vec![&child_server0],
-    ]));
+    assert!(
+        switch_board
+            .wait_for_disjoint_settled_zones(vec![vec![&parent_server0], vec![&child_server0]])
+    );
 }
 
 #[test]
