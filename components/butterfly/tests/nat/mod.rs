@@ -1,5 +1,3 @@
-extern crate habitat_butterfly;
-
 mod nat;
 
 use std::cmp::Ordering;
@@ -1714,9 +1712,7 @@ impl TestNetworkSwitchBoard {
         let servers = self.read_servers();
         let to_member = servers[to_idx]
             .butterfly
-            .member
-            .read()
-            .expect("Member lock is poisoned");
+            .read_member();
         let maybe_health = servers[from_idx]
             .butterfly
             .member_list

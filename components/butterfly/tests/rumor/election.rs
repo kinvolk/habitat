@@ -141,14 +141,10 @@ fn five_members_elect_a_new_leader_when_the_old_one_dies() {
 fn five_members_elect_a_new_leader_when_they_are_quorum_partitioned() {
     let mut net = btest::SwimNet::new_with_suitability(vec![1, 0, 0, 0, 0]);
     net[0]
-        .member
-        .write()
-        .expect("Member lock is poisoned")
+        .write_member()
         .set_persistent(true);
     net[4]
-        .member
-        .write()
-        .expect("Member lock is poisoned")
+        .write_member()
         .set_persistent(true);
     net.add_service(0, "core/witcher/1.2.3/20161208121212");
     net.add_service(1, "core/witcher/1.2.3/20161208121212");

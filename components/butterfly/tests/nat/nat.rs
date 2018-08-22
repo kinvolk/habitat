@@ -1,18 +1,38 @@
+use env_logger;
+
 use nat::{TestNetworkSwitchBoard, ZoneID};
 
 use habitat_butterfly::member::Health;
 
 #[test]
-fn servers_establish_the_same_zone() {
+fn servers_establish_the_same_zone_few() {
+    let switch_board = TestNetworkSwitchBoard::new();
+    let zone = ZoneID::new(1);
+    let server0 = switch_board.start_server_in_zone(zone);
+    let server1 = switch_board.start_server_in_zone(zone);
+
+    server0.talk_to(vec![&server1]);
+    assert!(switch_board.wait_for_health_all(Health::Alive));
+    assert!(switch_board.wait_for_same_settled_zone(vec![&server0, &server1]));
+}
+
+#[test]
+fn servers_establish_the_same_zone_many() {
+    env_logger::init();
+
     let switch_board = TestNetworkSwitchBoard::new();
     let zone = ZoneID::new(1);
     let server0 = switch_board.start_server_in_zone(zone);
     let server1 = switch_board.start_server_in_zone(zone);
     let server2 = switch_board.start_server_in_zone(zone);
+    let server3 = switch_board.start_server_in_zone(zone);
+    let server4 = switch_board.start_server_in_zone(zone);
+    let server5 = switch_board.start_server_in_zone(zone);
 
-    server0.talk_to(vec![&server1, &server2]);
+    server0.talk_to(vec![&server1, &server2, &server3]);
+    server2.talk_to(vec![&server3, &server4, &server5]);
     assert!(switch_board.wait_for_health_all(Health::Alive));
-    assert!(switch_board.wait_for_same_settled_zone(vec![&server0, &server1, &server2]));
+    assert!(switch_board.wait_for_same_settled_zone(vec![&server0, &server1, &server2, &server3, &server4, &server5]));
 }
 
 #[test]
