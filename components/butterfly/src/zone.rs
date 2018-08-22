@@ -117,10 +117,6 @@ impl ZoneList {
             .collect()
     }
 
-    pub fn get(&self, zone_id: &str) -> Option<&Zone> {
-        self.zones.get(zone_id)
-    }
-
     pub fn insert(&mut self, zone: Zone) -> bool {
         if zone.get_uuid().is_nil() {
             return false;
