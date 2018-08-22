@@ -31,6 +31,7 @@ use message::swim::{
 };
 use network::{GossipSender, Network};
 use rumor::RumorKey;
+use server::outbound::Outbound;
 use server::timing::Timing;
 use server::Server;
 use trace::TraceKind;
@@ -70,19 +71,23 @@ impl<N: Network> Push<N> {
             let long_wait = self.timing.gossip_timeout();
 
             'fanout: loop {
-                let mut thread_list = Vec::with_capacity(FANOUT);
                 if check_list.len() == 0 {
                     break 'fanout;
                 }
-                let drain_length = if check_list.len() >= FANOUT {
-                    FANOUT
-                } else {
-                    check_list.len()
-                };
+
+                let mut thread_list = Vec::with_capacity(FANOUT);
                 let next_gossip = self.timing.gossip_timeout();
-                for member in check_list.drain(0..drain_length) {
+                let mut pushes_to_make = FANOUT;
+                for member in check_list.drain(..) {
+                    if pushes_to_make == 0 {
+                        break;
+                    }
+                    pushes_to_make -= 1;
                     if self.server.is_member_blocked(member.get_id()) {
                         debug!("Not sending rumors to {} - it is blocked", member.get_id());
+                        continue;
+                    }
+                    if !Outbound::<N>::directly_reachable(&self.server, &member) {
                         continue;
                     }
                     // Unlike the SWIM mechanism, we don't actually want to send gossip traffic to
@@ -151,7 +156,7 @@ impl<N: Network> PushWorker<N> {
     fn send_rumors(&self, member: Member, rumors: Vec<RumorKey>) {
         let sender = match self.server
             .read_network()
-            .create_gossip_sender(member.gossip_socket_address())
+            .create_gossip_sender(self.get_member_address(&member))
         {
             Ok(s) => s,
             Err(e) => {
@@ -376,5 +381,13 @@ impl<N: Network> PushWorker<N> {
         rumor.set_zone(proto_zone);
         rumor.set_from_id(String::from(self.server.member_id()));
         Some(rumor)
+    }
+
+    /// Given a member, gets an address to communicate with it
+    fn get_member_address(&self, member: &Member) -> <N as Network>::AddressAndPort {
+        match member.gossip_socket_address_for_zone(self.server.read_member().get_zone_id()) {
+            Some(addr) => addr,
+            None => member.gossip_socket_address()
+        }
     }
 }

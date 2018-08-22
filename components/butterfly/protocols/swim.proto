@@ -2,6 +2,7 @@ syntax = "proto2";
 
 message ZoneAddress {
   optional string zone_id = 1;
+  // really optional
   optional string address = 2;
   optional int32 swim_port = 3;
   optional int32 gossip_port = 4;
@@ -23,8 +24,10 @@ message Zone {
   optional string id = 1;
   optional uint64 incarnation = 2;
   optional string maintainer_id = 3;
+  // really optional
   optional string parent_zone_id = 4;
   repeated string child_zone_ids = 5;
+  // really optional
   optional string successor = 6;
   repeated string predecessors = 7;
 }

@@ -27,9 +27,9 @@ use protobuf::{Message, RepeatedField};
 use time::SteadyTime;
 
 use member::{Health, Member};
-use message::swim::{
+use message::{BfUuid, swim::{
     Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type, ZoneChange,
-};
+}};
 use network::{AddressAndPort, Network, SwimSender};
 use rumor::RumorKey;
 use server::timing::Timing;
@@ -133,7 +133,7 @@ impl<N: Network> Outbound<N> {
 
             for member in check_list {
                 if self.server.member_list.pingable(&member) {
-                    if !self.directly_reachable(&member) {
+                    if !Self::directly_reachable(&self.server, &member) {
                         continue;
                     }
                     // This is the timeout for the next protocol period - if we
@@ -163,9 +163,9 @@ impl<N: Network> Outbound<N> {
         }
     }
 
-    fn directly_reachable(&self, member: &Member) -> bool {
+    pub fn directly_reachable(server: &Server<N>, member: &Member) -> bool {
         let mut dbg = ReachableDbg::default();
-        let reachable = self.directly_reachable_internal(member, &mut dbg);
+        let reachable = Self::directly_reachable_internal(server, member, &mut dbg);
 
         println!(
             "====REACHABLE====\n\
@@ -178,21 +178,21 @@ impl<N: Network> Outbound<N> {
         reachable
     }
 
-    fn directly_reachable_internal(&self, member: &Member, dbg: &mut ReachableDbg) -> bool {
-        dbg.our_member = self.server.read_member().clone();
+    fn directly_reachable_internal(server: &Server<N>, member: &Member, dbg: &mut ReachableDbg) -> bool {
+        dbg.our_member = server.read_member().clone();
         dbg.their_member = member.clone();
-        dbg.our_zone = self.server
+        dbg.our_zone = server
             .read_zone_list()
             .zones
             .get(dbg.our_member.get_zone_id())
             .cloned();
-        dbg.their_zone = self.server
+        dbg.their_zone = server
             .read_zone_list()
             .zones
             .get(dbg.their_member.get_zone_id())
             .cloned();
 
-        let our_zone_id = self.server.read_member().get_zone_id().to_string();
+        let our_zone_id = server.read_member().get_zone_id().to_string();
         let their_zone_id = member.get_zone_id();
 
         if our_zone_id == their_zone_id {
@@ -205,7 +205,7 @@ impl<N: Network> Outbound<N> {
         our_ids.insert(our_zone_id.to_string());
         their_ids.insert(their_zone_id.to_string());
 
-        if let Some(zone) = self.server.read_zone_list().zones.get(&our_zone_id) {
+        if let Some(zone) = server.read_zone_list().zones.get(&our_zone_id) {
             if zone.has_successor() {
                 our_ids.insert(zone.get_successor().to_string());
             }
@@ -214,7 +214,7 @@ impl<N: Network> Outbound<N> {
             }
         }
 
-        if let Some(zone) = self.server.read_zone_list().zones.get(their_zone_id) {
+        if let Some(zone) = server.read_zone_list().zones.get(their_zone_id) {
             if zone.has_successor() {
                 their_ids.insert(zone.get_successor().to_string());
             }
@@ -239,7 +239,7 @@ impl<N: Network> Outbound<N> {
                 return true;
             }
 
-            if let Some(zone) = self.server.read_zone_list().zones.get(additional_zone_id) {
+            if let Some(zone) = server.read_zone_list().zones.get(additional_zone_id) {
                 if zone.get_successor() == our_zone_id {
                     return true;
                 }
@@ -251,14 +251,14 @@ impl<N: Network> Outbound<N> {
             }
         }
 
-        for zone_address in self.server.read_member().get_additional_addresses() {
+        for zone_address in server.read_member().get_additional_addresses() {
             let additional_zone_id = zone_address.get_zone_id();
 
             if zone_address.get_zone_id() == their_zone_id {
                 return true;
             }
 
-            if let Some(zone) = self.server.read_zone_list().zones.get(additional_zone_id) {
+            if let Some(zone) = server.read_zone_list().zones.get(additional_zone_id) {
                 if zone.get_successor() == their_zone_id {
                     return true;
                 }
@@ -387,10 +387,33 @@ impl<N: Network> Outbound<N> {
     }
 }
 
-pub fn create_to_member<AP: AddressAndPort>(addr: AP) -> ProtoMember {
+pub fn create_to_member<AP: AddressAndPort>(addr: AP, target: &Member) -> ProtoMember {
     let mut proto_member = ProtoMember::new();
-    proto_member.set_address(addr.get_address().to_string());
-    proto_member.set_swim_port(addr.get_port().into());
+    let address_str = addr.get_address().to_string();
+    let port = addr.get_port() as i32;
+    let zone_id = {
+        if target.get_address() == address_str && target.get_swim_port() == port {
+            target.get_zone_id().to_string()
+        } else {
+            let mut zone_id = String::new();
+
+            for zone_address in target.get_additional_addresses() {
+                if zone_address.get_address() == address_str && zone_address.get_swim_port() == port {
+                    zone_id = zone_address.get_zone_id().to_string();
+                    break;
+                }
+            }
+
+            if zone_id.is_empty() {
+                zone_id = BfUuid::nil().to_string()
+            }
+            zone_id
+        }
+    };
+
+    proto_member.set_address(address_str);
+    proto_member.set_swim_port(port);
+    proto_member.set_zone_id(zone_id);
     proto_member
 }
 
@@ -550,7 +573,7 @@ pub fn ping<N: Network>(
         let member = forward_to.take().unwrap();
         ping.set_forward_to(member.proto);
     }
-    ping.set_to(create_to_member(addr));
+    ping.set_to(create_to_member(addr, &target));
     swim.set_ping(ping);
     populate_membership_rumors(server, target, &mut swim);
 
@@ -657,7 +680,7 @@ pub fn ack<N: Network>(
         let member = forward_to.take().unwrap();
         ack.set_forward_to(member.proto);
     }
-    ack.set_to(create_to_member(addr));
+    ack.set_to(create_to_member(addr, &target));
     swim.set_ack(ack);
     populate_membership_rumors(server, target, &mut swim);
 

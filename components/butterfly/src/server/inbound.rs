@@ -1059,7 +1059,7 @@ impl<N: Network> Inbound<N> {
                 to_member: to,
                 addr: addr,
                 swim_type: swim_type,
-                //from_address_kind: from_address_kind,
+                from_address_kind: from_address_kind,
                 to_address_kind: to_address_kind,
                 sender_in_the_same_zone_as_us: sender_in_the_same_zone_as_us,
             };
@@ -1134,8 +1134,11 @@ impl<N: Network> Inbound<N> {
         // - generate my own zone
         //   - new zone uuid for our member
         //   - new maintained zone
+        //   - send an ack
         // - store the additional address if not stored (ports should
         //   already be available)
+        //   - if this is an ack and to zone id is nil and from is additional
+        //     - send ack
         //   - this should always be an update of an existing address
         //     entry, never an addition
         //   - scenarios:
@@ -1331,15 +1334,26 @@ impl<N: Network> Inbound<N> {
                 // store the recipient address if not stored (ports
                 // should already be available)
                 {
+                    if hz_data.from_address_kind == AddressKind::Additional && BfUuid::parse_or_nil(hz_data.to_member.get_zone_id(), "to member zone id").is_nil() {
+                        stuff.call_ack = true;
+                        dbg_data.additional_address_msgs.push("will send an ack".to_string());
+                    }
+                    dbg_data.additional_address_msgs.push(format!("got message on {:?} address", hz_data.to_address_kind));
                     if hz_data.to_address_kind != AddressKind::Real {
                         for zone_address in our_member_clone.get_additional_addresses().iter() {
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has swim port different than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
-                            if zone_address.has_zone_id() {
+
+                            let zone_address_uuid = BfUuid::must_parse(zone_address.get_zone_id());
+
+                            if !zone_address_uuid.is_nil() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has non-nil zone id, skipping", zone_address));
                                 continue;
                             }
                             if zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} already has an address, skipping", zone_address));
                                 continue;
                             }
 
@@ -1381,18 +1395,26 @@ impl<N: Network> Inbound<N> {
                 // store the recipient address if not stored (ports
                 // should already be available)
                 {
+                    if hz_data.from_address_kind == AddressKind::Additional && BfUuid::parse_or_nil(hz_data.to_member.get_zone_id(), "to member zone id").is_nil() {
+                        stuff.call_ack = true;
+                        dbg_data.additional_address_msgs.push("will send an ack".to_string());
+                    }
+                    dbg_data.additional_address_msgs.push(format!("got message on {:?} address", hz_data.to_address_kind));
                     if hz_data.to_address_kind != AddressKind::Real {
                         for zone_address in our_member_clone.get_additional_addresses().iter() {
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has swim port different than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
 
                             let zone_address_uuid = BfUuid::must_parse(zone_address.get_zone_id());
 
                             if !zone_address_uuid.is_nil() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has non-nil zone id, skipping", zone_address));
                                 continue;
                             }
                             if zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} already has an address, skipping", zone_address));
                                 continue;
                             }
 
@@ -1489,23 +1511,35 @@ impl<N: Network> Inbound<N> {
                 //       - continue with the other approach
                 //   - search for a zone address instance with a nil
                 //     zone and an unset address
-                //     - found and both address and port are the
-                //       same
+                //     - found and ports are the same
                 //       - update the zone to sender zone itself
+                //       - update the address
                 //     - not found
                 //       - warn
                 {
+                    if hz_data.from_address_kind == AddressKind::Additional && BfUuid::parse_or_nil(hz_data.to_member.get_zone_id(), "to member zone id").is_nil() {
+                        stuff.call_ack = true;
+                        dbg_data.additional_address_msgs.push("will send an ack".to_string());
+                    }
                     // this is to ignore messages that arrived to our
                     // real address, not the additional one
                     let mut done = hz_data.to_address_kind == AddressKind::Real;
+                    dbg_data.additional_address_msgs.push(format!("got message on {:?} address", hz_data.to_address_kind));
 
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the variant-fitting scenario".to_string());
                         for zone_address in our_member_clone.get_additional_addresses() {
+                            if !zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has no address, skipping", zone_address));
+                                continue;
+                            }
                             if zone_address.get_address() != hz_data.to_member.get_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different address than {}, skipping", zone_address, hz_data.to_member.get_address()));
                                 continue;
                             }
 
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different swim port than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
 
@@ -1513,36 +1547,39 @@ impl<N: Network> Inbound<N> {
 
                             if zone_address_uuid == sender_zone_uuid {
                                 done = true;
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has the same zone id as sender, done", zone_address));
                                 break;
                             }
-
-                            let mut maybe_new_zone_id = None;
 
                             if sender_zone.has_successor() {
                                 let sender_successor_uuid =
                                     BfUuid::must_parse(sender_zone.get_successor());
 
                                 if sender_successor_uuid == zone_address_uuid {
-                                    maybe_new_zone_id = Some(None);
+                                    dbg_data.additional_address_msgs.push(format!("zone address {:#?} has the same zone id as sender's successor, done", zone_address));
+                                    done = true;
+                                    break;
                                 }
                             }
-                            if maybe_new_zone_id.is_none() {
-                                for predecessor_id in sender_zone.get_predecessors() {
-                                    let predecessor_uuid = BfUuid::must_parse(predecessor_id);
 
-                                    if predecessor_uuid == zone_address_uuid {
-                                        if sender_zone.has_successor() {
-                                            maybe_new_zone_id =
-                                                Some(Some(sender_zone.get_successor().to_string()));
-                                        } else {
-                                            maybe_new_zone_id =
-                                                Some(Some(sender_zone_uuid.to_string()));
-                                        }
+                            let mut maybe_new_zone_id = None;
+
+                            for predecessor_id in sender_zone.get_predecessors() {
+                                let predecessor_uuid = BfUuid::must_parse(predecessor_id);
+
+                                if predecessor_uuid == zone_address_uuid {
+                                    dbg_data.additional_address_msgs.push(format!("zone address {:#?} has the same zone id as sender's predecessor, done", zone_address));
+                                    if sender_zone.has_successor() {
+                                        maybe_new_zone_id =
+                                            Some(sender_zone.get_successor().to_string());
+                                    } else {
+                                        maybe_new_zone_id =
+                                            Some(sender_zone_uuid.to_string());
                                     }
                                 }
                             }
                             done = match maybe_new_zone_id {
-                                Some(Some(zone_id)) => {
+                                Some(zone_id) => {
                                     let mut new_zone_address = zone_address.clone();
 
                                     new_zone_address.set_zone_id(zone_id);
@@ -1556,8 +1593,10 @@ impl<N: Network> Inbound<N> {
 
                                     true
                                 }
-                                Some(None) => true,
-                                None => false,
+                                None => {
+                                    dbg_data.additional_address_msgs.push(format!("zone address {:#?} does not match the sender, skipping", zone_address));
+                                    false
+                                }
                             };
                             if done {
                                 break;
@@ -1565,66 +1604,85 @@ impl<N: Network> Inbound<N> {
                         }
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the relative-fitting scenario".to_string());
                         // TODO: handle parent/child relationships
                         // following the steps written above
+                        dbg_data.additional_address_msgs.push("haha not really, not implemented".to_string());
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the nil-zoned scenario".to_string());
                         for zone_address in our_member_clone.get_additional_addresses() {
+                            if !zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has no address, skipping", zone_address));
+                                continue;
+                            }
                             if zone_address.get_address() != hz_data.to_member.get_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different address than {}, skipping", zone_address, hz_data.to_member.get_address()));
                                 continue;
                             }
 
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different swim port than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
 
                             let zone_address_uuid = BfUuid::must_parse(zone_address.get_zone_id());
 
-                            if zone_address_uuid.is_nil() {
-                                let mut new_zone_address = zone_address.clone();
-
-                                new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                stuff.additional_address_for_our_member =
-                                    Some((zone_address.clone(), new_zone_address));
-
-                                dbg_data.additional_address_update =
-                                    stuff.additional_address_for_our_member.clone();
-
-                                done = true;
-                                break;
+                            if !zone_address_uuid.is_nil() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has non-nil zone, skipping", zone_address));
+                                continue;
                             }
+
+                            let mut new_zone_address = zone_address.clone();
+
+                            new_zone_address.set_zone_id(sender_zone_uuid.to_string());
+                            stuff.additional_address_for_our_member =
+                                Some((zone_address.clone(), new_zone_address));
+
+                            dbg_data.additional_address_update =
+                                stuff.additional_address_for_our_member.clone();
+
+                            done = true;
+                            break;
                         }
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the nil-zoned, address-guessing scenario".to_string());
                         for zone_address in our_member_clone.get_additional_addresses() {
                             if zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} already has an address, skipping", zone_address));
                                 continue;
                             }
 
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different swim port than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
 
                             let zone_address_uuid = BfUuid::must_parse(zone_address.get_zone_id());
 
-                            if zone_address_uuid.is_nil() {
-                                let mut new_zone_address = zone_address.clone();
-
-                                new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                new_zone_address
-                                    .set_address(hz_data.to_member.get_address().to_string());
-                                stuff.additional_address_for_our_member =
-                                    Some((zone_address.clone(), new_zone_address));
-
-                                dbg_data.additional_address_update =
-                                    stuff.additional_address_for_our_member.clone();
-
-                                done = true;
-                                break;
+                            if !zone_address_uuid.is_nil() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has non-nil zone, skipping", zone_address));
+                                continue;
                             }
+
+                            let mut new_zone_address = zone_address.clone();
+
+                            new_zone_address.set_zone_id(sender_zone_uuid.to_string());
+                            new_zone_address
+                                .set_address(hz_data.to_member.get_address().to_string());
+                            stuff.additional_address_for_our_member =
+                                Some((zone_address.clone(), new_zone_address));
+
+                            dbg_data.additional_address_update =
+                                stuff.additional_address_for_our_member.clone();
+
+                            done = true;
+                            break;
                         }
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("unhandled zone address…".to_string());
                         warn!("Arf")
                     }
                 }
@@ -1764,8 +1822,8 @@ impl<N: Network> Inbound<N> {
                 //       - continue with the other approach
                 //   - search for a zone address instance with a
                 //     relation-fitting zone
-                //     - relation-fitting zone means a relative of a
-                //       sender zone (child/parent/itself)
+                //     - relation-fitting zone means a (direct?)
+                //       relative of a sender zone (child/parent/itself)
                 //     - found and both address and port are the
                 //       same
                 //       - zone in the instance is the same as sender
@@ -1791,17 +1849,29 @@ impl<N: Network> Inbound<N> {
                 //     - not found
                 //       - warn
                 {
+                    if hz_data.from_address_kind == AddressKind::Additional && BfUuid::parse_or_nil(hz_data.to_member.get_zone_id(), "to member zone id").is_nil() {
+                        stuff.call_ack = true;
+                        dbg_data.additional_address_msgs.push("will send an ack".to_string());
+                    }
                     // this is to ignore messages that arrived to our
                     // real address, not the additional one
                     let mut done = hz_data.to_address_kind == AddressKind::Real;
+                    dbg_data.additional_address_msgs.push(format!("got message on {:?} address", hz_data.to_address_kind));
 
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the variant-fitting scenario".to_string());
                         for zone_address in our_member_clone.get_additional_addresses() {
+                            if !zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has no address, skipping", zone_address));
+                                continue;
+                            }
                             if zone_address.get_address() != hz_data.to_member.get_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different address than {}, skipping", zone_address, hz_data.to_member.get_address()));
                                 continue;
                             }
 
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different swim port than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
 
@@ -1809,36 +1879,39 @@ impl<N: Network> Inbound<N> {
 
                             if zone_address_uuid == sender_zone_uuid {
                                 done = true;
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has the same zone id as sender, done", zone_address));
                                 break;
                             }
-
-                            let mut maybe_new_zone_id = None;
 
                             if sender_zone.has_successor() {
                                 let sender_successor_uuid =
                                     BfUuid::must_parse(sender_zone.get_successor());
 
                                 if sender_successor_uuid == zone_address_uuid {
-                                    maybe_new_zone_id = Some(None);
+                                    dbg_data.additional_address_msgs.push(format!("zone address {:#?} has the same zone id as sender's successor, done", zone_address));
+                                    done = true;
+                                    break;
                                 }
                             }
-                            if maybe_new_zone_id.is_none() {
-                                for predecessor_id in sender_zone.get_predecessors() {
-                                    let predecessor_uuid = BfUuid::must_parse(predecessor_id);
 
-                                    if predecessor_uuid == zone_address_uuid {
-                                        if sender_zone.has_successor() {
-                                            maybe_new_zone_id =
-                                                Some(Some(sender_zone.get_successor().to_string()));
-                                        } else {
-                                            maybe_new_zone_id =
-                                                Some(Some(sender_zone_uuid.to_string()));
-                                        }
+                            let mut maybe_new_zone_id = None;
+
+                            for predecessor_id in sender_zone.get_predecessors() {
+                                let predecessor_uuid = BfUuid::must_parse(predecessor_id);
+
+                                if predecessor_uuid == zone_address_uuid {
+                                    dbg_data.additional_address_msgs.push(format!("zone address {:#?} has the same zone id as sender's predecessor, done", zone_address));
+                                    if sender_zone.has_successor() {
+                                        maybe_new_zone_id =
+                                            Some(sender_zone.get_successor().to_string());
+                                    } else {
+                                        maybe_new_zone_id =
+                                            Some(sender_zone_uuid.to_string());
                                     }
                                 }
                             }
                             done = match maybe_new_zone_id {
-                                Some(Some(zone_id)) => {
+                                Some(zone_id) => {
                                     let mut new_zone_address = zone_address.clone();
 
                                     new_zone_address.set_zone_id(zone_id);
@@ -1852,8 +1925,10 @@ impl<N: Network> Inbound<N> {
 
                                     true
                                 }
-                                Some(None) => true,
-                                None => false,
+                                None => {
+                                    dbg_data.additional_address_msgs.push(format!("zone address {:#?} does not match the sender, skipping", zone_address));
+                                    false
+                                }
                             };
                             if done {
                                 break;
@@ -1861,66 +1936,85 @@ impl<N: Network> Inbound<N> {
                         }
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the relative-fitting scenario".to_string());
                         // TODO: handle parent/child relationships
                         // following the steps written above
+                        dbg_data.additional_address_msgs.push("haha not really, not implemented".to_string());
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the nil-zoned scenario".to_string());
                         for zone_address in our_member_clone.get_additional_addresses() {
+                            if !zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has no address, skipping", zone_address));
+                                continue;
+                            }
                             if zone_address.get_address() != hz_data.to_member.get_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different address than {}, skipping", zone_address, hz_data.to_member.get_address()));
                                 continue;
                             }
 
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different swim port than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
 
                             let zone_address_uuid = BfUuid::must_parse(zone_address.get_zone_id());
 
-                            if zone_address_uuid.is_nil() {
-                                let mut new_zone_address = zone_address.clone();
-
-                                new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                stuff.additional_address_for_our_member =
-                                    Some((zone_address.clone(), new_zone_address));
-
-                                dbg_data.additional_address_update =
-                                    stuff.additional_address_for_our_member.clone();
-
-                                done = true;
-                                break;
+                            if !zone_address_uuid.is_nil() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has non-nil zone, skipping", zone_address));
+                                continue;
                             }
+
+                            let mut new_zone_address = zone_address.clone();
+
+                            new_zone_address.set_zone_id(sender_zone_uuid.to_string());
+                            stuff.additional_address_for_our_member =
+                                Some((zone_address.clone(), new_zone_address));
+
+                            dbg_data.additional_address_update =
+                                stuff.additional_address_for_our_member.clone();
+
+                            done = true;
+                            break;
                         }
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("going with the nil-zoned, address-guessing scenario".to_string());
                         for zone_address in our_member_clone.get_additional_addresses() {
                             if zone_address.has_address() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} already has an address, skipping", zone_address));
                                 continue;
                             }
 
                             if zone_address.get_swim_port() != hz_data.to_member.get_swim_port() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has different swim port than {}, skipping", zone_address, hz_data.to_member.get_swim_port()));
                                 continue;
                             }
 
                             let zone_address_uuid = BfUuid::must_parse(zone_address.get_zone_id());
 
-                            if zone_address_uuid.is_nil() {
-                                let mut new_zone_address = zone_address.clone();
-
-                                new_zone_address.set_zone_id(sender_zone_uuid.to_string());
-                                new_zone_address
-                                    .set_address(hz_data.to_member.get_address().to_string());
-                                stuff.additional_address_for_our_member =
-                                    Some((zone_address.clone(), new_zone_address));
-
-                                dbg_data.additional_address_update =
-                                    stuff.additional_address_for_our_member.clone();
-
-                                done = true;
-                                break;
+                            if !zone_address_uuid.is_nil() {
+                                dbg_data.additional_address_msgs.push(format!("zone address {:#?} has non-nil zone, skipping", zone_address));
+                                continue;
                             }
+
+                            let mut new_zone_address = zone_address.clone();
+
+                            new_zone_address.set_zone_id(sender_zone_uuid.to_string());
+                            new_zone_address
+                                .set_address(hz_data.to_member.get_address().to_string());
+                            stuff.additional_address_for_our_member =
+                                Some((zone_address.clone(), new_zone_address));
+
+                            dbg_data.additional_address_update =
+                                stuff.additional_address_for_our_member.clone();
+
+                            done = true;
+                            break;
                         }
                     }
                     if !done {
+                        dbg_data.additional_address_msgs.push("unhandled zone address…".to_string());
                         warn!("Arf")
                     }
                 }
