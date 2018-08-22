@@ -31,7 +31,6 @@ use message::swim::{
 };
 use network::{GossipSender, Network};
 use rumor::RumorKey;
-use server::outbound::Outbound;
 use server::timing::Timing;
 use server::Server;
 use trace::TraceKind;
@@ -87,7 +86,9 @@ impl<N: Network> Push<N> {
                         debug!("Not sending rumors to {} - it is blocked", member.get_id());
                         continue;
                     }
-                    if !Outbound::<N>::directly_reachable(&self.server, &member) {
+                    let reachable_addresses = self.server.directly_reachable(&member);
+
+                    if reachable_addresses.is_none() {
                         continue;
                     }
                     // Unlike the SWIM mechanism, we don't actually want to send gossip traffic to
@@ -103,7 +104,7 @@ impl<N: Network> Push<N> {
                             let guard = match thread::Builder::new()
                                 .name(String::from("push-worker"))
                                 .spawn(move || {
-                                    PushWorker::new(sc).send_rumors(member, rumors);
+                                    PushWorker::new(sc).send_rumors(member, reachable_addresses.unwrap().1, rumors);
                                 }) {
                                 Ok(guard) => guard,
                                 Err(e) => {
@@ -153,10 +154,10 @@ impl<N: Network> PushWorker<N> {
     /// closes the connection as soon as we are done sending rumors. ZeroMQ may choose to keep the
     /// connection and socket open for 1 second longer - so it is possible, but unlikely, that this
     /// method can loose messages.
-    fn send_rumors(&self, member: Member, rumors: Vec<RumorKey>) {
+    fn send_rumors(&self, member: Member, addr: N::AddressAndPort, rumors: Vec<RumorKey>) {
         let sender = match self.server
             .read_network()
-            .create_gossip_sender(self.get_member_address(&member))
+            .create_gossip_sender(addr)
         {
             Ok(s) => s,
             Err(e) => {
@@ -335,7 +336,7 @@ impl<N: Network> PushWorker<N> {
                 Err(e) => println!(
                     "Could not send rumor to {:?} @ {:?}; {:?}",
                     member.get_id(),
-                    member.gossip_socket_address::<N::AddressAndPort>(),
+                    addr,
                     e
                 ),
             }
@@ -381,13 +382,5 @@ impl<N: Network> PushWorker<N> {
         rumor.set_zone(proto_zone);
         rumor.set_from_id(String::from(self.server.member_id()));
         Some(rumor)
-    }
-
-    /// Given a member, gets an address to communicate with it
-    fn get_member_address(&self, member: &Member) -> <N as Network>::AddressAndPort {
-        match member.gossip_socket_address_for_zone(self.server.read_member().get_zone_id()) {
-            Some(addr) => addr,
-            None => member.gossip_socket_address(),
-        }
     }
 }

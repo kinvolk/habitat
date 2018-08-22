@@ -6,6 +6,7 @@ message ZoneAddress {
   optional string address = 2;
   optional int32 swim_port = 3;
   optional int32 gossip_port = 4;
+  optional string tag = 5;
 }
 
 message Member {
@@ -74,6 +75,16 @@ message Election {
   repeated string votes = 6;
 }
 
+message NamedPort {
+  optional string name = 1;
+  optional int32 port = 2;
+}
+
+message Ports {
+  optional string tag = 1;
+  repeated NamedPort named_ports = 2;
+}
+
 message Service {
   optional string member_id = 1;
   optional string service_group = 2;
@@ -82,6 +93,7 @@ message Service {
   optional string pkg = 9;
   optional bytes cfg = 10;
   optional SysInfo sys = 12;
+  repeated Ports ports = 13;
 }
 
 message ServiceConfig {
@@ -108,7 +120,6 @@ message SysInfo {
   optional uint32 http_gateway_port = 6;
   optional string ctl_gateway_ip = 7 [default = "127.0.0.1"];
   optional uint32 ctl_gateway_port = 8 [default = 9632];
-  repeated ZoneAddress additional_addresses = 9;
 }
 
 message Departure {

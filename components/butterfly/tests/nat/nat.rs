@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use env_logger;
 
 use nat::{TestNetworkSwitchBoard, ZoneID};
@@ -17,6 +19,23 @@ macro_rules! slc {
         slc![$($x),*]
     }
 }
+
+// Convenient macro for inline creation of hashmaps.
+macro_rules! hm(
+    {$($key:expr => $value:expr),+} => {
+        {
+            [
+                $(
+                    ($key, $value),
+                )+
+            ].iter().cloned().collect::<HashMap<_, _>>()
+        }
+    };
+    // This form of the macro is to allow the leading comma.
+    { $($key:expr => $value:expr),+, } => {
+        hm!{ $($key => $value),+ }
+    };
+);
 
 #[test]
 fn servers_establish_the_same_zone_few() {
@@ -66,7 +85,7 @@ fn sibling_zones_get_merged() {
     assert!(switch_board.wait_for_health_of_those(Health::Alive, &[&server1a, &server1b]));
     assert!(
         switch_board
-            .wait_for_disjoint_settled_zones(&[&[&server0a, &server0b], &[&server1a, &server1b],])
+            .wait_for_splitted_same_zone(&[&[&server0a, &server0b], &[&server1a, &server1b],])
     );
 
     let server2 = switch_board.start_server_in_zone(zone);
@@ -92,7 +111,12 @@ fn different_zones_get_different_ids_few() {
     let hole0 = nat.punch_hole();
     let parent_server0 = switch_board.start_server_in_zone(parent_zone);
     let child_server0 = switch_board
-        .start_server_in_zone_with_expose_data(child_zone, vec![hole0.to_expose_data()]);
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole0.into_additional_address(),
+            },
+        );
 
     nat.make_route(hole0, child_server0.addr);
     parent_server0.talk_to(&[&hole0]);
@@ -117,11 +141,26 @@ fn different_zones_get_different_ids_many() {
     let parent_server1 = switch_board.start_server_in_zone(parent_zone);
     let parent_server2 = switch_board.start_server_in_zone(parent_zone);
     let child_server0 = switch_board
-        .start_server_in_zone_with_expose_data(child_zone, vec![hole0.to_expose_data()]);
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole0.into_additional_address(),
+            },
+        );
     let child_server1 = switch_board
-        .start_server_in_zone_with_expose_data(child_zone, vec![hole1.to_expose_data()]);
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole1.into_additional_address(),
+            },
+        );
     let child_server2 = switch_board
-        .start_server_in_zone_with_expose_data(child_zone, vec![hole2.to_expose_data()]);
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole2.into_additional_address(),
+            },
+        );
 
     nat.make_route(hole0, child_server0.addr);
     nat.make_route(hole1, child_server1.addr);
@@ -154,11 +193,26 @@ fn different_zones_get_different_ids_with_unexposed_servers() {
     let parent_server1 = switch_board.start_server_in_zone(parent_zone);
     let parent_server2 = switch_board.start_server_in_zone(parent_zone);
     let child_server0 = switch_board
-        .start_server_in_zone_with_expose_data(child_zone, vec![hole0.to_expose_data()]);
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole0.into_additional_address(),
+            },
+        );
     let child_server1 = switch_board
-        .start_server_in_zone_with_expose_data(child_zone, vec![hole1.to_expose_data()]);
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole1.into_additional_address(),
+            },
+        );
     let child_server2 = switch_board
-        .start_server_in_zone_with_expose_data(child_zone, vec![hole2.to_expose_data()]);
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole2.into_additional_address(),
+            },
+        );
     let child_server3 = switch_board.start_server_in_zone(child_zone);
     let child_server4 = switch_board.start_server_in_zone(child_zone);
     let child_server5 = switch_board.start_server_in_zone(child_zone);
@@ -182,6 +236,80 @@ fn different_zones_get_different_ids_with_unexposed_servers() {
             &child_server3,
             &child_server4,
             &child_server5,
+        ],
+    ]));
+}
+
+#[test]
+fn different_zones_get_different_ids_outcast() {
+    let switch_board = TestNetworkSwitchBoard::new();
+    let parent_zone = ZoneID::new(1);
+    let child_zone = ZoneID::new(2);
+    let mut nat = switch_board.setup_nat(
+        parent_zone,
+        child_zone,
+        //None,
+    );
+    let hole0 = nat.punch_hole();
+    let hole1 = nat.punch_hole();
+    let hole2 = nat.punch_hole();
+    let hole3 = nat.punch_hole();
+    let parent_server0 = switch_board.start_server_in_zone(parent_zone);
+    let parent_server1 = switch_board.start_server_in_zone(parent_zone);
+    let parent_server2 = switch_board.start_server_in_zone(parent_zone);
+    let child_server0 = switch_board
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole0.into_additional_address(),
+            },
+        );
+    let child_server1 = switch_board
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole1.into_additional_address(),
+            },
+        );
+    let child_server2 = switch_board
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole2.into_additional_address(),
+            },
+        );
+    let child_server3 = switch_board
+        .start_server_in_zone_with_additional_addresses(
+            child_zone,
+            hm!{
+                "-".to_string() => hole3.into_additional_address(),
+            },
+        );
+
+    nat.make_route(hole0, child_server0.addr);
+    nat.make_route(hole1, child_server1.addr);
+    nat.make_route(hole2, child_server2.addr);
+    nat.make_route(hole3, child_server3.addr);
+    parent_server0.talk_to(&[&parent_server1, &parent_server2]);
+    child_server0.talk_to(&[&child_server1, &child_server2]);
+    parent_server1.talk_to(&[&hole0, &hole1]);
+    parent_server2.talk_to(&[&hole2]);
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
+    assert!(switch_board.wait_for_disjoint_settled_zones(&[
+        &[&parent_server0, &parent_server1, &parent_server2],
+        &[&child_server0, &child_server1, &child_server2],
+    ]));
+
+    child_server3.talk_to(&[&parent_server0, &parent_server1, &parent_server2]);
+
+    assert!(switch_board.wait_for_health_of_all(Health::Alive));
+    assert!(switch_board.wait_for_disjoint_settled_zones(&[
+        slc![&parent_server0, &parent_server1, &parent_server2],
+        slc![
+            &child_server0,
+            &child_server1,
+            &child_server2,
+            &child_server3
         ],
     ]));
 }

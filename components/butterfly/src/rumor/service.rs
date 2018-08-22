@@ -17,18 +17,23 @@
 //! Service rumors declare that a given `Server` is running this Service.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
 use habitat_core::package::Identifiable;
 use habitat_core::service::ServiceGroup;
-use protobuf::{self, Message};
+use protobuf::{self, Message, RepeatedField};
 use toml;
 
 use error::Result;
 pub use message::swim::SysInfo;
-use message::swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumor_Type, Service as ProtoService};
+use message::swim::{NamedPort as ProtoNamedPort, Ports as ProtoPorts, Rumor as ProtoRumor, Rumor_Type as ProtoRumor_Type, Service as ProtoService};
 use rumor::Rumor;
+
+pub type Tag = String;
+pub type PortName = String;
+pub type TaggedPorts = HashMap<Tag, HashMap<PortName, u16>>;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Service(ProtoRumor);
@@ -87,6 +92,7 @@ impl Service {
         service_group: &ServiceGroup,
         sys: &SysInfo,
         cfg: Option<&toml::value::Table>,
+        tagged_ports: &TaggedPorts,
     ) -> Self
     where
         T: Identifiable,
@@ -118,6 +124,24 @@ impl Service {
             proto.set_cfg(toml::ser::to_vec(cfg).expect("Struct should serialize to bytes"));
         }
 
+        let all_proto_ports = tagged_ports.iter().map(|(tag, ports)| {
+            let all_named_ports = ports.iter().map(|(name, port)| {
+                let mut named_port = ProtoNamedPort::new();
+
+                named_port.set_name(name.clone());
+                named_port.set_port(*port as i32);
+
+                named_port
+            }).collect::<Vec<_>>();
+            let mut proto_ports = ProtoPorts::new();
+
+            proto_ports.set_tag(tag.clone());
+            proto_ports.set_named_ports(RepeatedField::from_vec(all_named_ports));
+
+            proto_ports
+        }).collect::<Vec<_>>();
+
+        proto.set_ports(RepeatedField::from_vec(all_proto_ports));
         rumor.set_service(proto);
         Service(rumor)
     }
@@ -160,6 +184,7 @@ impl Rumor for Service {
 #[cfg(test)]
 mod tests {
     use std::cmp::Ordering;
+    use std::collections::HashMap;
     use std::str::FromStr;
 
     use habitat_core::package::{Identifiable, PackageIdent};
@@ -172,7 +197,7 @@ mod tests {
     fn create_service(member_id: &str) -> Service {
         let pkg = PackageIdent::from_str("core/neurosis/1.2.3/20161208121212").unwrap();
         let sg = ServiceGroup::new(None, pkg.name(), "production", None).unwrap();
-        Service::new(member_id.to_string(), &pkg, &sg, &SysInfo::default(), None)
+        Service::new(member_id.to_string(), &pkg, &sg, &SysInfo::default(), None, &HashMap::new())
     }
 
     #[test]
@@ -264,6 +289,7 @@ mod tests {
             &sg,
             &SysInfo::default(),
             None,
+            &HashMap::new(),
         );
     }
 }

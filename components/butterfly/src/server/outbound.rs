@@ -134,7 +134,9 @@ impl<N: Network> Outbound<N> {
 
             for member in check_list {
                 if self.server.member_list.pingable(&member) {
-                    if !Self::directly_reachable(&self.server, &member) {
+                    let reachable_addresses = self.server.directly_reachable(&member);
+
+                    if reachable_addresses.is_none() {
                         continue;
                     }
                     // This is the timeout for the next protocol period - if we
@@ -142,7 +144,7 @@ impl<N: Network> Outbound<N> {
                     // until this timer expires.
                     let next_protocol_period = self.timing.next_protocol_period();
 
-                    self.probe(member);
+                    self.probe(member, reachable_addresses.unwrap().0);
 
                     if SteadyTime::now() <= next_protocol_period {
                         let wait_time =
@@ -164,120 +166,6 @@ impl<N: Network> Outbound<N> {
         }
     }
 
-    pub fn directly_reachable(server: &Server<N>, member: &Member) -> bool {
-        let mut dbg = ReachableDbg::default();
-        let reachable = Self::directly_reachable_internal(server, member, &mut dbg);
-
-        println!(
-            "====REACHABLE====\n\
-             reachable: {}\n\
-             {:#?}\n\
-             =================",
-            reachable, dbg,
-        );
-
-        reachable
-    }
-
-    fn directly_reachable_internal(
-        server: &Server<N>,
-        member: &Member,
-        dbg: &mut ReachableDbg,
-    ) -> bool {
-        dbg.our_member = server.read_member().clone();
-        dbg.their_member = member.clone();
-        dbg.our_zone = server
-            .read_zone_list()
-            .zones
-            .get(dbg.our_member.get_zone_id())
-            .cloned();
-        dbg.their_zone = server
-            .read_zone_list()
-            .zones
-            .get(dbg.their_member.get_zone_id())
-            .cloned();
-
-        let our_zone_id = server.read_member().get_zone_id().to_string();
-        let their_zone_id = member.get_zone_id();
-
-        if our_zone_id == their_zone_id {
-            return true;
-        }
-
-        let mut our_ids = HashSet::new();
-        let mut their_ids = HashSet::new();
-
-        our_ids.insert(our_zone_id.to_string());
-        their_ids.insert(their_zone_id.to_string());
-
-        if let Some(zone) = server.read_zone_list().zones.get(&our_zone_id) {
-            if zone.has_successor() {
-                our_ids.insert(zone.get_successor().to_string());
-            }
-            for zone_id in zone.get_predecessors().iter() {
-                our_ids.insert(zone_id.to_string());
-            }
-        }
-
-        if let Some(zone) = server.read_zone_list().zones.get(their_zone_id) {
-            if zone.has_successor() {
-                their_ids.insert(zone.get_successor().to_string());
-            }
-            for zone_id in zone.get_predecessors().iter() {
-                their_ids.insert(zone_id.to_string());
-            }
-        }
-
-        let have_common_ids = !our_ids.is_disjoint(&their_ids);
-
-        dbg.our_ids = Some(our_ids);
-        dbg.their_ids = Some(their_ids);
-
-        if have_common_ids {
-            return true;
-        }
-
-        for zone_address in member.get_additional_addresses() {
-            let additional_zone_id = zone_address.get_zone_id();
-
-            if additional_zone_id == our_zone_id {
-                return true;
-            }
-
-            if let Some(zone) = server.read_zone_list().zones.get(additional_zone_id) {
-                if zone.get_successor() == our_zone_id {
-                    return true;
-                }
-                for zone_id in zone.get_predecessors().iter() {
-                    if *zone_id == our_zone_id {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        for zone_address in server.read_member().get_additional_addresses() {
-            let additional_zone_id = zone_address.get_zone_id();
-
-            if zone_address.get_zone_id() == their_zone_id {
-                return true;
-            }
-
-            if let Some(zone) = server.read_zone_list().zones.get(additional_zone_id) {
-                if zone.get_successor() == their_zone_id {
-                    return true;
-                }
-                for zone_id in zone.get_predecessors().iter() {
-                    if zone_id == their_zone_id {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
     ///
     /// Probe Loop
     ///
@@ -294,15 +182,7 @@ impl<N: Network> Outbound<N> {
     /// PING_RECV_QUEUE_EMPTY_SLEEP_MS, and try again.
     ///
     /// If we don't receive anything at all in the Ping/PingReq loop, we mark the member as Suspect.
-    fn probe(&mut self, member: Member) {
-        let addr = if let Some(addr) =
-            member.swim_socket_address_for_zone(self.server.read_member().get_zone_id())
-        {
-            addr
-        } else {
-            member.swim_socket_address()
-        };
-
+    fn probe(&mut self, member: Member, addr: N::AddressAndPort) {
         trace_it!(PROBE: &self.server, TraceKind::ProbeBegin, member.get_id(), addr);
 
         // Ping the member, and wait for the ack.
@@ -459,8 +339,19 @@ pub fn populate_membership_rumors<N: Network>(
     swim.set_membership(membership_entries);
 
     let mut zone_entries = RepeatedField::new();
-    let our_own_zone_id = server.read_member().get_zone_id().to_string();
-    let mut our_own_zone_gossiped = false;
+    let our_zone_id = server.read_member().get_zone_id().to_string();
+    let maybe_maintained_zone_id = match server.read_zone_list().maintained_zone_id {
+        Some(ref zone_id) => {
+            if *zone_id == our_zone_id {
+                None
+            } else {
+                Some(zone_id.clone())
+            }
+        }
+        None => None
+    };
+    let mut our_zone_gossiped = false;
+    let mut maintained_zone_gossiped = false;
     let zone_rumors = server
         .rumor_heat
         .currently_hot_rumors(target.get_id())
@@ -475,21 +366,39 @@ pub fn populate_membership_rumors<N: Network>(
         for ref rkey in zone_rumors.iter() {
             if let Some(zone) = zone_list.zones.get(&rkey.id) {
                 zone_entries.push(zone.proto.clone());
-                if rkey.id == our_own_zone_id {
-                    our_own_zone_gossiped = true;
+                if rkey.id == our_zone_id {
+                    our_zone_gossiped = true;
+                }
+                if let Some(ref maintained_zone_id) = maybe_maintained_zone_id {
+                    if rkey.id == *maintained_zone_id {
+                        maintained_zone_gossiped = true;
+                    }
                 }
             }
         }
     }
     // Always include zone information of the sender
     let zone_settled = *(server.read_zone_settled());
-    if zone_settled && !our_own_zone_gossiped {
-        if let Some(zone) = server
-            .read_zone_list()
-            .zones
-            .get(&server.get_settled_zone_id())
-        {
-            zone_entries.push(zone.proto.clone());
+    if zone_settled {
+        if !our_zone_gossiped {
+            if let Some(zone) = server
+                .read_zone_list()
+                .zones
+                .get(&our_zone_id)
+            {
+                zone_entries.push(zone.proto.clone());
+            }
+        }
+        if let Some(maintained_zone_id) = maybe_maintained_zone_id {
+            if !maintained_zone_gossiped {
+                if let Some(zone) = server
+                    .read_zone_list()
+                    .zones
+                    .get(&maintained_zone_id)
+                {
+                    zone_entries.push(zone.proto.clone());
+                }
+            }
         }
     }
     // We don't want to update the heat for rumors that we know we are sending to a target that is

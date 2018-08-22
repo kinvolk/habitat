@@ -37,6 +37,7 @@ use server::{
     zones::{
         self, AddressKind, HandleZoneData, HandleZoneDbgData, HandleZoneResults,
         HandleZoneResultsStuff, ZoneChangeDbgData, ZoneChangeResultsMsgOrNothing,
+        ZoneRelative,
     },
     Server,
 };
@@ -71,7 +72,7 @@ impl<N: Network> Inbound<N> {
         println!("{}: {}", self.server.member_id(), msg.as_ref());
     }
 
-    /// Run the thread. Listens for messages up to 1k in size, and then processes them accordingly.
+    /// Run the thread. Listens for messages up to 4k in size, and then processes them accordingly.
     pub fn run(&self) {
         let mut recv_buffer: Vec<u8> = vec![0; 4096];
         loop {
@@ -279,6 +280,71 @@ impl<N: Network> Inbound<N> {
                     self.server.insert_zone(zone);
                     let mut zone_list = self.server.write_zone_list();
                     zone_list.maintained_zone_id = Some(zone_id);
+                }
+                if let Some((sender_uuid, relative)) = stuff.sender_relative {
+                    // TODO: update our zone with parent/child stuff
+                    // need to take aliases into account!
+                    let zone_id = {
+                        if let Some(uuid) = stuff.zone_uuid_for_our_member {
+                            uuid.to_string()
+                        } else {
+                            self.server.read_member().get_zone_id().to_string()
+                        }
+                    };
+                    let zone_to_insert = {
+                        let mut zone_to_insert = None;
+                        let zone_list = self.server.read_zone_list();
+
+                        if let Some(zone) = zone_list.zones.get(&zone_id) {
+                            let sender_id_str = sender_uuid.to_string();
+                            match relative {
+                                ZoneRelative::Child => {
+                                    let mut found = zone
+                                        .get_child_zone_ids()
+                                        .iter()
+                                        .any(|id| *id == sender_id_str);
+
+                                    if !found {
+                                        for child_zone_id in zone.get_child_zone_ids().iter() {
+                                            if let Some(child_zone) = zone_list.zones.get(child_zone_id) {
+                                                if child_zone.has_successor() && child_zone.get_successor() == sender_id_str {
+                                                    found = true;
+                                                    break;
+                                                }
+
+                                                if child_zone.get_predecessors().iter().any(|id| *id == sender_id_str) {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if !found {
+                                        let mut zone_clone = zone.clone();
+
+                                        zone_clone.mut_child_zone_ids().push(sender_id_str);
+
+                                        zone_to_insert = Some(zone_clone);
+                                    }
+                                }
+                                ZoneRelative::Parent => {
+                                    if !zone.has_parent_zone_id() {
+                                        let mut zone_clone = zone.clone();
+
+                                        zone_clone.set_parent_zone_id(sender_id_str);
+
+                                        zone_to_insert = Some(zone_clone);
+                                    }
+                                }
+                            }
+                        }
+
+                        zone_to_insert
+                    };
+
+                    if let Some(zone) = zone_to_insert {
+                        self.server.insert_zone(zone);
+                    }
                 }
                 let member_changed = stuff.zone_uuid_for_our_member.is_some()
                     || stuff.additional_address_for_our_member.is_some();
@@ -505,6 +571,71 @@ impl<N: Network> Inbound<N> {
                     self.server.insert_zone(zone);
                     let mut zone_list = self.server.write_zone_list();
                     zone_list.maintained_zone_id = Some(zone_id);
+                }
+                if let Some((sender_uuid, relative)) = stuff.sender_relative {
+                    // TODO: update our zone with parent/child stuff
+                    // need to take aliases into account!
+                    let zone_id = {
+                        if let Some(uuid) = stuff.zone_uuid_for_our_member {
+                            uuid.to_string()
+                        } else {
+                            self.server.read_member().get_zone_id().to_string()
+                        }
+                    };
+                    let zone_to_insert = {
+                        let mut zone_to_insert = None;
+                        let zone_list = self.server.read_zone_list();
+
+                        if let Some(zone) = zone_list.zones.get(&zone_id) {
+                            let sender_id_str = sender_uuid.to_string();
+                            match relative {
+                                ZoneRelative::Child => {
+                                    let mut found = zone
+                                        .get_child_zone_ids()
+                                        .iter()
+                                        .any(|id| *id == sender_id_str);
+
+                                    if !found {
+                                        for child_zone_id in zone.get_child_zone_ids().iter() {
+                                            if let Some(child_zone) = zone_list.zones.get(child_zone_id) {
+                                                if child_zone.has_successor() && child_zone.get_successor() == sender_id_str {
+                                                    found = true;
+                                                    break;
+                                                }
+
+                                                if child_zone.get_predecessors().iter().any(|id| *id == sender_id_str) {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if !found {
+                                        let mut zone_clone = zone.clone();
+
+                                        zone_clone.mut_child_zone_ids().push(sender_id_str);
+
+                                        zone_to_insert = Some(zone_clone);
+                                    }
+                                }
+                                ZoneRelative::Parent => {
+                                    if !zone.has_parent_zone_id() {
+                                        let mut zone_clone = zone.clone();
+
+                                        zone_clone.set_parent_zone_id(sender_id_str);
+
+                                        zone_to_insert = Some(zone_clone);
+                                    }
+                                }
+                            }
+                        }
+
+                        zone_to_insert
+                    };
+
+                    if let Some(zone) = zone_to_insert {
+                        self.server.insert_zone(zone);
+                    }
                 }
                 let member_changed = stuff.zone_uuid_for_our_member.is_some()
                     || stuff.additional_address_for_our_member.is_some();
@@ -912,7 +1043,7 @@ impl<N: Network> Inbound<N> {
                     );
                     error!("{}", msg);
                     dbg_data.parse_failures.push(msg);
-                    return AddressKind::Unknown;
+                    continue;
                 }
             };
 
@@ -1114,6 +1245,7 @@ impl<N: Network> Inbound<N> {
         //       - assume sender's zone
         //     - 1ab. sender in a different private network than me
         //       - generate my own zone
+        //       - add sender id as a child/parent of my zone
         //       - store the recipient address if not stored (ports
         //         should already be available)
         //       - store sender zone id? what did i mean by that?
@@ -1127,6 +1259,7 @@ impl<N: Network> Inbound<N> {
         //       - 1ba>. senders zone id is greater than mine
         //         - use Self::process_zone_change_internal_state
         //     - 1bb. sender in a different private network than me
+        //       - add sender id as a child/parent of my zone
         //       - store the recipient address if not stored (ports
         //         should already be available)
         //       - store sender zone id? what did i mean by that?
@@ -1137,6 +1270,9 @@ impl<N: Network> Inbound<N> {
         //   - new zone uuid for our member
         //   - new maintained zone
         //   - send an ack
+        // - add sender id as a child/parent of my zone
+        //   - if from/to is real/additional then sender is a parent
+        //   - if from/to is additional/real then sender is a child
         // - store the additional address if not stored (ports should
         //   already be available)
         //   - if this is an ack and to zone id is nil and from is additional
@@ -1510,6 +1646,33 @@ impl<N: Network> Inbound<N> {
                     stuff.call_ack = true;
 
                     dbg_data.our_new_zone_id = new_zone_uuid.to_string();
+                }
+                // add sender id as a child/parent of my zone
+                {
+                    match (hz_data.from_address_kind, hz_data.to_address_kind) {
+                        (AddressKind::Additional, AddressKind::Real) => {
+                            stuff.sender_relative = Some((sender_zone_uuid, ZoneRelative::Child));
+                        }
+                        (AddressKind::Real, AddressKind::Additional) => {
+                            stuff.sender_relative = Some((sender_zone_uuid, ZoneRelative::Parent));
+                        }
+                        (AddressKind::Real, AddressKind::Real) => {
+                            unreachable!(
+                                "sender was detected as being from different private network, \
+                                 but we got two real addresses"
+                            );
+                        }
+                        (AddressKind::Additional, AddressKind::Additional) => {
+                            unimplemented!("TODO when we implement sibling zones")
+                        }
+                        (_, _) => {
+                            warn!(
+                                "unhandled relationship case, from {:?} to {:?}",
+                                hz_data.from_address_kind,
+                                hz_data.to_address_kind,
+                            )
+                        }
+                    }
                 }
                 // store the recipient address if not stored (ports
                 // should already be available)
@@ -1905,6 +2068,33 @@ impl<N: Network> Inbound<N> {
 
                 let mut stuff = HandleZoneResultsStuff::default();
 
+                // add sender id as a child/parent of my zone
+                {
+                    match (hz_data.from_address_kind, hz_data.to_address_kind) {
+                        (AddressKind::Additional, AddressKind::Real) => {
+                            stuff.sender_relative = Some((sender_zone_uuid, ZoneRelative::Child));
+                        }
+                        (AddressKind::Real, AddressKind::Additional) => {
+                            stuff.sender_relative = Some((sender_zone_uuid, ZoneRelative::Parent));
+                        }
+                        (AddressKind::Real, AddressKind::Real) => {
+                            unreachable!(
+                                "sender was detected as being from different private network, \
+                                 but we got two real addresses"
+                            );
+                        }
+                        (AddressKind::Additional, AddressKind::Additional) => {
+                            unimplemented!("TODO when we implement sibling zones")
+                        }
+                        (_, _) => {
+                            warn!(
+                                "unhandled relationship case, from {:?} to {:?}",
+                                hz_data.from_address_kind,
+                                hz_data.to_address_kind,
+                            )
+                        }
+                    }
+                }
                 // store the recipient address if not stored (ports
                 // should already be available)
                 //

@@ -30,9 +30,38 @@ use habitat_butterfly::network::{
 use habitat_butterfly::server::timing::Timing;
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::trace::Trace;
-use habitat_butterfly::zone::ExposeData;
+use habitat_butterfly::zone::{AdditionalAddress, TaggedAddressesFromAddress};
 use habitat_core::crypto::SymKey;
 use habitat_core::service::ServiceGroup;
+
+struct DbgVec {
+    v: Vec<String>
+}
+
+impl DbgVec {
+    fn new(header: String) -> Self {
+        Self {
+            v: vec![
+                "==============================".to_string(),
+                header,
+                "==============================".to_string(),
+            ],
+        }
+    }
+
+    fn push<S: AsRef<str>>(&mut self, s: S) {
+        for line in s.as_ref().split('\n') {
+            self.v.push(line.to_string())
+        }
+    }
+}
+
+impl Drop for DbgVec {
+    fn drop(&mut self) {
+        self.push("==============================".to_string());
+        println!("{:#?}", self.v);
+    }
+}
 
 // ZoneID is a number that identifies a zone. Within a zone all the
 // supervisors can talk to each other. For the interzone
@@ -214,6 +243,10 @@ impl ZoneMap {
     }
      */
 
+    pub fn is_zone_child_of(&self, child_id: ZoneID, parent_id: ZoneID) -> bool {
+        self.get_zone_guard(parent_id).children.contains(&child_id)
+    }
+
     pub fn is_zone_descendant_of_mut(
         &mut self,
         descendant_id: ZoneID,
@@ -329,7 +362,6 @@ impl ZoneMap {
         }
     }
 
-    /*
     fn get_zone_guard(&self, zone_id: ZoneID) -> MutexGuard<ZoneInfo> {
         self.0
             .get(&zone_id)
@@ -337,7 +369,6 @@ impl ZoneMap {
             .lock()
             .expect(&format!("Zone {} lock is poisoned", zone_id))
     }
-     */
 
     fn get_zone_mut(&mut self, zone_id: ZoneID) -> &mut ZoneInfo {
         self.0
@@ -1402,17 +1433,9 @@ impl NatHole {
         Self { addr }
     }
 
-    pub fn to_expose_data(self) -> ExposeData<TestAddr> {
-        ExposeData {
+    pub fn into_additional_address(self) -> AdditionalAddress<TestAddr> {
+        AdditionalAddress {
             address: Some(self.addr.addr),
-            swim_port: self.addr.port,
-            gossip_port: self.addr.port,
-        }
-    }
-
-    pub fn to_expose_data_stripped(self) -> ExposeData<TestAddr> {
-        ExposeData {
-            address: None,
             swim_port: self.addr.port,
             gossip_port: self.addr.port,
         }
@@ -1538,6 +1561,22 @@ impl NatsKey {
 
 type NatsMap = HashMap<NatsKey, TestNat>;
 
+#[derive(Copy, Clone)]
+enum SettledZones {
+    Unique,
+    AllTheSame,
+}
+
+impl SettledZones {
+    fn from_bool(b: bool) -> SettledZones {
+        if b {
+            SettledZones::Unique
+        } else {
+            SettledZones::AllTheSame
+        }
+    }
+}
+
 // TestNetworkSwitchBoard implements the multizone setup for testing
 // the spanning ring.
 #[derive(Clone)]
@@ -1602,35 +1641,36 @@ impl TestNetworkSwitchBoard {
      */
 
     pub fn start_server_in_zone(&self, zone_id: ZoneID) -> TestServer {
-        self.start_server_in_zone_with_expose_data(zone_id, Vec::new())
+        self.start_server_in_zone_with_additional_addresses(zone_id, HashMap::new())
     }
 
-    pub fn start_server_in_zone_with_expose_data(
+    pub fn start_server_in_zone_with_additional_addresses(
         &self,
         zone_id: ZoneID,
-        expose_data: Vec<ExposeData<TestAddr>>,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
     ) -> TestServer {
         let addr = {
             let mut addresses = self.get_addresses_guard();
+
             addresses.generate_address_for_server(zone_id)
         };
-        self.start_server(addr, expose_data)
+        self.start_server(addr, tagged_additional_addresses)
     }
 
     pub fn start_public_server_in_zone(&self, zone_id: ZoneID) -> TestServer {
-        self.start_public_server_in_zone_with_expose_data(zone_id, Vec::new())
+        self.start_public_server_in_zone_with_additional_addresses(zone_id, HashMap::new())
     }
 
-    pub fn start_public_server_in_zone_with_expose_data(
+    pub fn start_public_server_in_zone_with_additional_addresses(
         &self,
         zone_id: ZoneID,
-        expose_data: Vec<ExposeData<TestAddr>>,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
     ) -> TestServer {
         let addr = {
             let mut addresses = self.get_addresses_guard();
             addresses.generate_public_address_for_server(zone_id)
         };
-        self.start_server(addr, expose_data)
+        self.start_server(addr, tagged_additional_addresses)
     }
 
     /*
@@ -1685,11 +1725,26 @@ impl TestNetworkSwitchBoard {
         self.wait_for_disjoint_settled_zones(&[servers])
     }
 
+    pub fn wait_for_splitted_same_zone<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
+        self.wait_for_settled_zones(disjoint_servers, false)
+    }
+
     pub fn wait_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
         &self,
         disjoint_servers: &[T],
     ) -> bool {
-        self.dsz_assert_assumptions(disjoint_servers);
+        self.wait_for_settled_zones(disjoint_servers, true)
+    }
+
+    fn wait_for_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+        full: bool
+    ) -> bool {
+        self.dsz_assert_assumptions(disjoint_servers, SettledZones::from_bool(full));
         let rounds = self.gossip_rounds_in(4);
         let all_servers = {
             let mut all_servers = Vec::new();
@@ -1704,7 +1759,7 @@ impl TestNetworkSwitchBoard {
         };
 
         loop {
-            if self.check_for_disjoint_settled_zones(disjoint_servers) {
+            if self.check_for_disjoint_settled_zones(disjoint_servers, full) {
                 return true;
             }
 
@@ -1718,6 +1773,7 @@ impl TestNetworkSwitchBoard {
     fn check_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
         &self,
         disjoint_servers: &[T],
+        with_relationship_checks: bool,
     ) -> bool {
         if !self.dsz_check_equal_zones(disjoint_servers) {
             return false;
@@ -1725,11 +1781,18 @@ impl TestNetworkSwitchBoard {
         if !self.dsz_check_unique_zone_count(disjoint_servers) {
             return false;
         }
+        if with_relationship_checks && !self.dsz_check_relationships(disjoint_servers) {
+            return false;
+        }
 
         true
     }
 
-    fn dsz_assert_assumptions<'a, T: AsRef<[&'a TestServer]>>(&self, disjoint_servers: &[T]) {
+    fn dsz_assert_assumptions<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+        settled_zones: SettledZones
+    ) {
         let mut ids = Vec::new();
         let mut indices = Vec::new();
 
@@ -1741,9 +1804,21 @@ impl TestNetworkSwitchBoard {
 
             let zone_id = servers[0].zone_id;
 
-            assert!(!ids.contains(&zone_id));
+            match settled_zones {
+                SettledZones::Unique => {
+                    assert!(!ids.contains(&zone_id));
+                    ids.push(zone_id);
+                }
+                SettledZones::AllTheSame => {
+                    if ids.is_empty() {
+                        ids.push(zone_id);
+                    } else {
+                        assert!(ids[0] == zone_id);
+                    }
+                }
+            }
+
             assert!(!indices.contains(&servers[0].idx));
-            ids.push(zone_id);
             indices.push(servers[0].idx);
             for server in servers.iter().skip(1) {
                 assert!(server.zone_id == zone_id);
@@ -1796,15 +1871,133 @@ impl TestNetworkSwitchBoard {
         zone_uuids.len() == disjoint_servers.len()
     }
 
+    fn dsz_check_relationships<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
+        let all_test_and_real_zone_id_pairs = disjoint_servers
+            .iter()
+            .map(|servers_to_ref| {
+                let servers = servers_to_ref.as_ref();
+
+                (
+                    servers[0].zone_id,
+                    servers[0].butterfly.get_settled_zone_id(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut dbg = DbgVec::new("relationship check".to_string());
+        dbg.push(format!("test zones and real zones: {:#?}", all_test_and_real_zone_id_pairs));
+
+        for servers in disjoint_servers {
+            let this_test_zone_id = servers.as_ref()[0].zone_id;
+            let (maybe_real_parent_zone_id, real_my_own_zone_id, real_child_zone_ids) = self
+                .dsz_get_related_real_zone_ids(this_test_zone_id, &all_test_and_real_zone_id_pairs);
+            let set = real_child_zone_ids.iter().collect::<HashSet<_>>();
+
+            dbg.push(format!("real ids for test id {}, parent: {:#?}, my own: {:#?}, children: {:#?}", this_test_zone_id, maybe_real_parent_zone_id, real_my_own_zone_id, real_child_zone_ids));
+
+            for server in servers.as_ref() {
+                let zone_list = server.butterfly.read_zone_list();
+                let zone = match zone_list.zones.get(&real_my_own_zone_id) {
+                    Some(zone) => zone,
+                    None => {
+                        dbg.push(format!("no info about own zone?"));
+                        return false;
+                    }
+                };
+                dbg.push(format!("zone for {}({}): {:#?}", server.idx, server.butterfly.member_id(), zone));
+
+                match (&maybe_real_parent_zone_id, zone.has_parent_zone_id()) {
+                    (&Some(ref id), true) => {
+                        if id != zone.get_parent_zone_id() {
+                            dbg.push(format!("expected parent zone id to be {}, got {}", id, zone.get_parent_zone_id()));
+                            if let Some(parent_zone) = zone_list.zones.get(id) {
+                                dbg.push(format!("expected parent zone: {:#?}", parent_zone));
+                            } else {
+                                dbg.push("no info about expected parent zone");
+                            }
+                            if let Some(parent_zone) = zone_list.zones.get(zone.get_parent_zone_id()) {
+                                dbg.push(format!("actual parent zone: {:#?}", parent_zone));
+                            } else {
+                                dbg.push("no info about actual parent zone");
+                            }
+                            return false;
+                        }
+                    }
+                    (None, false) => {}
+                    (_, _) => {
+                        dbg.push(format!("mismatch between having and not having a parent ({:?} vs {})", maybe_real_parent_zone_id, zone.get_parent_zone_id()));
+                        return false;
+                    }
+                }
+
+                let zone_set = zone.get_child_zone_ids().iter().collect::<HashSet<_>>();
+
+                if set.symmetric_difference(&zone_set).next().is_some() {
+                    dbg.push("child zones of the server:");
+                    for zone_id in zone_set {
+                        if let Some(child_zone) = zone_list.zones.get(zone_id) {
+                            dbg.push(format!("{:#?}", child_zone));
+                        } else {
+                            dbg.push(format!("no info about child zone {}", zone_id));
+                        }
+                    }
+
+                    dbg.push("expected child zones:");
+                    for zone_id in set {
+                        if let Some(child_zone) = zone_list.zones.get(zone_id) {
+                            dbg.push(format!("{:#?}", child_zone));
+                        } else {
+                            dbg.push(format!("no info about child zone {}", zone_id));
+                        }
+                    }
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn dsz_get_related_real_zone_ids(
+        &self,
+        this_test_zone_id: ZoneID,
+        all_test_and_real_zone_id_pairs: &[(ZoneID, String)],
+    ) -> (Option<String>, String, Vec<String>) {
+        let zone_map = self.read_zones();
+        let mut maybe_parent = None;
+        let mut my_own = String::new();
+        let mut children = Vec::new();
+
+        for pair in all_test_and_real_zone_id_pairs {
+            if this_test_zone_id == pair.0 {
+                assert!(my_own.is_empty());
+                my_own = pair.1.clone();
+                continue;
+            }
+            if zone_map.is_zone_child_of(this_test_zone_id, pair.0) {
+                assert!(maybe_parent.is_none());
+                maybe_parent = Some(pair.1.clone());
+                continue;
+            }
+            if zone_map.is_zone_child_of(pair.0, this_test_zone_id) {
+                children.push(pair.1.clone());
+            }
+        }
+
+        (maybe_parent, my_own, children)
+    }
+
     fn start_server(
         &self,
         addr: TestAddrAndPort,
-        expose_data: Vec<ExposeData<TestAddr>>,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
     ) -> TestServer {
         let network = self.create_test_network(addr);
         let mut servers = self.write_servers();
         let idx = servers.len();
-        let server = self.create_test_server(network, idx, expose_data);
+        let server = self.create_test_server(network, idx, tagged_additional_addresses);
         servers.push(server.clone());
         server
     }
@@ -1819,7 +2012,7 @@ impl TestNetworkSwitchBoard {
         &self,
         network: TestNetwork,
         idx: usize,
-        expose_data: Vec<ExposeData<TestAddr>>,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
     ) -> TestServer {
         let addr = network.get_addr();
         let member = create_member_from_addr(addr);
@@ -1844,7 +2037,7 @@ impl TestNetworkSwitchBoard {
         let timing = Timing::default();
         let zone_id = addr.get_zone_id();
 
-        butterfly.merge_expose_data(expose_data);
+        butterfly.merge_additional_addresses(tagged_additional_addresses);
         butterfly.start(timing).expect("failed to start server");
 
         TestServer {

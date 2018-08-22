@@ -27,7 +27,7 @@ mod push;
 pub mod timing;
 mod zones;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi;
 use std::fmt::{self, Debug};
 use std::fs;
@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 
 use habitat_core::crypto::SymKey;
 use habitat_core::service::ServiceGroup;
+use protobuf::RepeatedField;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
@@ -58,7 +59,7 @@ use rumor::service_config::ServiceConfig;
 use rumor::service_file::ServiceFile;
 use rumor::{Rumor, RumorKey, RumorStore};
 use trace::{Trace, TraceKind};
-use zone::{ExposeData, Zone, ZoneList};
+use zone::{TaggedAddressesFromNetwork, Reachable, Zone, ZoneList};
 
 pub trait Suitability: Debug + Send + Sync {
     fn get(&self, service_group: &ServiceGroup) -> u64;
@@ -1071,54 +1072,67 @@ impl<N: Network> Server<N> {
         self.member.write().expect("Member lock is poisoned")
     }
 
-    pub fn merge_expose_data(
+    pub fn merge_additional_addresses(
         &self,
-        mut expose_data_vec: Vec<ExposeData<<N::AddressAndPort as AddressAndPort>::Address>>,
+        new_tagged_additional_addresses: TaggedAddressesFromNetwork<N>,
     ) {
         let mut member = self.write_member();
         let mut changed = false;
         {
-            let additional_addresses = member.mut_additional_addresses();
+            let mut new_addresses = Vec::with_capacity(new_tagged_additional_addresses.len());
+            let mut old_tagged_zone_addresses = {
+                let mut v = member.take_additional_addresses()
+                    .into_vec();
+                let mut m = HashMap::with_capacity(v.len());
 
-            if additional_addresses.len() > expose_data_vec.len() {
-                additional_addresses.truncate(expose_data_vec.len());
-                changed = true;
-            }
-
-            for (expose_data, zone_address) in expose_data_vec
-                .drain(0..additional_addresses.len())
-                .zip(additional_addresses.iter_mut())
-            {
-                if zone_address.get_swim_port() != expose_data.swim_port as i32 {
-                    zone_address.set_swim_port(expose_data.swim_port as i32);
-                    changed = true;
+                for zone_address in v.drain(..) {
+                    m.insert(zone_address.get_tag().to_string(), zone_address);
                 }
-                if zone_address.get_gossip_port() != expose_data.gossip_port as i32 {
-                    zone_address.set_gossip_port(expose_data.gossip_port as i32);
-                    changed = true;
-                }
-                if let Some(address) = expose_data.address {
-                    let address_str = address.to_string();
 
-                    if zone_address.get_address() != address_str {
-                        zone_address.set_address(address_str);
+                m
+            };
+
+            for (tag, additional_address) in new_tagged_additional_addresses {
+                let swim_port = additional_address.swim_port as i32;
+                let gossip_port = additional_address.gossip_port as i32;
+
+                if let Some(mut zone_address) = old_tagged_zone_addresses.remove(&tag) {
+                    if zone_address.get_swim_port() != swim_port {
+                        zone_address.set_swim_port(swim_port);
                         changed = true;
                     }
+                    if zone_address.get_gossip_port() != gossip_port {
+                        zone_address.set_gossip_port(gossip_port);
+                        changed = true;
+                    }
+                    if let Some(ref addr) = additional_address.address {
+                        let addr_str = addr.to_string();
+
+                        if !zone_address.has_address() ||
+                            zone_address.get_address() != addr_str {
+                                zone_address.set_address(addr_str);
+                                changed = true;
+                            }
+                    }
+                    new_addresses.push(zone_address);
+                } else {
+                    let mut zone_address = ZoneAddress::new();
+
+                    zone_address.set_zone_id(BfUuid::nil().to_string());
+                    if let Some(ref addr) = additional_address.address {
+                        zone_address.set_address(addr.to_string());
+                    }
+                    zone_address.set_swim_port(swim_port);
+                    zone_address.set_gossip_port(gossip_port);
+                    zone_address.set_tag(tag.clone());
+                    new_addresses.push(zone_address);
+                    changed = true;
                 }
             }
-            // extra exposed addresses, not yet reflected in additional addresses
-            for expose_data in expose_data_vec.drain(..) {
-                let mut zone_address = ZoneAddress::default();
-
-                zone_address.set_zone_id(BfUuid::nil().to_string());
-                zone_address.set_swim_port(expose_data.swim_port as i32);
-                zone_address.set_gossip_port(expose_data.gossip_port as i32);
-                if let Some(address) = expose_data.address {
-                    zone_address.set_address(address.to_string());
-                }
-                additional_addresses.push(zone_address);
+            if !old_tagged_zone_addresses.is_empty() {
                 changed = true;
             }
+            member.set_additional_addresses(RepeatedField::from_vec(new_addresses));
         }
 
         if changed {
@@ -1126,6 +1140,40 @@ impl<N: Network> Server<N> {
 
             member.set_incarnation(incarnation + 1);
             self.insert_member(member.clone(), Health::Alive);
+        }
+    }
+
+    pub fn directly_reachable(&self, their_member: &Member) -> Option<(N::AddressAndPort, N::AddressAndPort)> {
+        let reachable = {
+            // Copy to avoid locking both member and zone list at the
+            // same time. We have no clear rules about lock ordering
+            // to avoid deadlocks.
+            let (our_zone_id, our_additional_addresses) = {
+                let our_member = self.read_member();
+
+                (our_member.get_zone_id().to_string(),
+                 our_member.get_additional_addresses().to_vec())
+            };
+
+            self.read_zone_list().directly_reachable(
+                &our_zone_id,
+                their_member.get_zone_id(),
+                &our_additional_addresses,
+                their_member.get_additional_addresses(),
+            )
+        };
+
+        match reachable {
+            Reachable::Yes => Some((their_member.swim_socket_address(),
+                                    their_member.gossip_socket_address())),
+            Reachable::ThroughOtherZone(zone_id) => {
+                match (their_member.swim_socket_address_for_zone(&zone_id),
+                       their_member.gossip_socket_address_for_zone(&zone_id)) {
+                    (Some(swim), Some(gossip)) => return Some((swim, gossip)),
+                    _ => return None,
+                }
+            }
+            Reachable::No => None,
         }
     }
 }
@@ -1177,6 +1225,8 @@ fn persist_loop<N: Network>(server: Server<N>) {
 #[cfg(test)]
 mod tests {
     mod server {
+        use std::collections::HashMap;
+
         use habitat_core::service::ServiceGroup;
         use member::Member;
         use network::{Network, RealNetwork};
@@ -1186,6 +1236,7 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
         use trace::Trace;
+        use zone::{AdditionalAddress, TaggedAddressesFromNetwork};
 
         static SWIM_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
         static GOSSIP_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -1224,8 +1275,12 @@ mod tests {
             )
         }
 
+        fn ipaddr(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
+            IpAddr::V4(Ipv4Addr::new(a, b, c, d))
+        }
+
         fn localhost_addr(port: u16) -> SocketAddr {
-            let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+            let ip = ipaddr(127, 0, 0, 1);
             SocketAddr::new(ip, port)
         }
 
@@ -1240,6 +1295,110 @@ mod tests {
             server
                 .start(Timing::default())
                 .expect("Server failed to start");
+        }
+
+        fn additional_address(
+            address: Option<IpAddr>,
+            swim_port: u16,
+            gossip_port: u16
+        ) -> AdditionalAddress<IpAddr> {
+            AdditionalAddress { address, swim_port, gossip_port }
+        }
+
+        fn verify_additional_addresses(
+            server: &Server<RealNetwork>,
+            mut additional_addresses: TaggedAddressesFromNetwork<RealNetwork>
+        ) {
+            let member = server.read_member();
+            let zone_addresses = member.get_additional_addresses();
+
+            assert_eq!(zone_addresses.len(), additional_addresses.len());
+
+            for zone_address in zone_addresses.iter() {
+                let additional_address = additional_addresses
+                    .remove(zone_address.get_tag())
+                    .expect(&format!(
+                        "member has an unexpected zone address with tag {}",
+                        zone_address.get_tag(),
+                    ));
+
+                if zone_address.has_address() {
+                    assert!(additional_address.address.is_some());
+                    assert_eq!(zone_address.get_address(), additional_address.address.unwrap().to_string());
+                } else {
+                    assert!(additional_address.address.is_none());
+                }
+                assert_eq!(zone_address.get_swim_port(), additional_address.swim_port as i32);
+                assert_eq!(zone_address.get_gossip_port(), additional_address.gossip_port as i32);
+            }
+        }
+
+        fn get_incarnation(server: &Server<RealNetwork>) -> u64 {
+            server.read_member().get_incarnation()
+        }
+
+        #[test]
+        fn merge_additional_addresses() {
+            let server = start_server();
+            let mut additional_addresses = HashMap::new();
+            let mut incarnation = get_incarnation(&server);
+
+            additional_addresses.insert(
+                "foo".to_string(),
+                additional_address(None, 10, 20)
+            );
+            additional_addresses.insert(
+                "bar".to_string(),
+                additional_address(Some(ipaddr(1, 2, 3, 4)), 11, 21)
+            );
+            incarnation += 1;
+            server.merge_additional_addresses(additional_addresses.clone());
+            verify_additional_addresses(&server, additional_addresses);
+            assert_eq!(get_incarnation(&server), incarnation);
+
+            additional_addresses = HashMap::new();
+            // set the previously unset ip address to something concrete
+            additional_addresses.insert(
+                "foo".to_string(),
+                additional_address(Some(ipaddr(10, 20, 30, 40)), 10, 20)
+            );
+            // this should leave the previous ip address untouched, part 1
+            additional_addresses.insert(
+                "bar".to_string(),
+                additional_address(None, 12, 22)
+            );
+            // new additional address
+            additional_addresses.insert(
+                "baz".to_string(),
+                additional_address(Some(ipaddr(11, 22, 33, 44)), 12, 22)
+            );
+            incarnation += 1;
+            server.merge_additional_addresses(additional_addresses.clone());
+            // this should leave the previous ip address untouched, part 2
+            additional_addresses.get_mut("bar").unwrap().address = Some(ipaddr(1, 2, 3, 4));
+            verify_additional_addresses(&server, additional_addresses);
+            assert_eq!(get_incarnation(&server), incarnation);
+
+            // drop additional addresses
+            additional_addresses = HashMap::new();
+            additional_addresses.insert(
+                "foo".to_string(),
+                additional_address(Some(ipaddr(10, 20, 30, 40)), 10, 20)
+            );
+            incarnation += 1;
+            server.merge_additional_addresses(additional_addresses.clone());
+            verify_additional_addresses(&server, additional_addresses);
+            assert_eq!(get_incarnation(&server), incarnation);
+
+            // nothing should change, so incarnation should be left intact
+            additional_addresses = HashMap::new();
+            additional_addresses.insert(
+                "foo".to_string(),
+                additional_address(Some(ipaddr(10, 20, 30, 40)), 10, 20)
+            );
+            server.merge_additional_addresses(additional_addresses.clone());
+            verify_additional_addresses(&server, additional_addresses);
+            assert_eq!(get_incarnation(&server), incarnation);
         }
     }
 }

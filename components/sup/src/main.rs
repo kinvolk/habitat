@@ -171,6 +171,9 @@ fn cli<'a, 'b>() -> App<'a, 'b> {
             (@arg PEER_WATCH_FILE: --("peer-watch-file") +takes_value conflicts_with[peer]
                 "Watch this file for connecting to the ring"
             )
+            (@arg AA_WATCH_FILE: --("aa-watch-file") +takes_value
+                "Watch this file for exposing the supervisor and services"
+            )
             (@arg RING: --ring -r +takes_value "Ring key name")
             (@arg CHANNEL: --channel +takes_value
                 "Receive Supervisor updates from the specified release channel [default: stable]")
@@ -342,6 +345,9 @@ fn mgrcfg_from_matches(m: &ArgMatches) -> Result<ManagerConfig> {
     cfg.gossip_peers = gossip_peers;
     if let Some(watch_peer_file) = m.value_of("PEER_WATCH_FILE") {
         cfg.watch_peer_file = Some(String::from(watch_peer_file));
+    }
+    if let Some(aa_watch_file) = m.value_of("AA_WATCH_FILE") {
+        cfg.additional_addresses_file = Some(String::from(aa_watch_file));
     }
     cfg.ring_key = match m.value_of("RING") {
         Some(val) => Some(SymKey::get_latest_pair_for(
