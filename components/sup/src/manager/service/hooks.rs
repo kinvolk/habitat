@@ -1009,12 +1009,14 @@ impl<'a> HookOutput<'a> {
 #[cfg(test)]
 #[cfg(not(windows))]
 mod tests {
+    use std::collections::HashMap;
     use std::fs::{self, DirBuilder};
     use std::iter;
     use std::process::{Command, Stdio};
     use std::string::ToString;
 
-    use butterfly::member::MemberList;
+    use butterfly::member::{Health, Member, MemberList};
+    use butterfly::message::BfUuid;
     use butterfly::rumor::election::Election as ElectionRumor;
     use butterfly::rumor::election::ElectionUpdate as ElectionUpdateRumor;
     use butterfly::rumor::service::Service as ServiceRumor;
@@ -1022,6 +1024,7 @@ mod tests {
     use butterfly::rumor::service_config::ServiceConfig as ServiceConfigRumor;
     use butterfly::rumor::service_file::ServiceFile as ServiceFileRumor;
     use butterfly::rumor::RumorStore;
+    use butterfly::zone::{Zone, ZoneList};
     use hcore::package::{PackageIdent, PackageInstall};
     use hcore::service::ServiceGroup;
     use protocol;
@@ -1307,9 +1310,10 @@ echo "The message is Hola Mundo"
         sys_info.set_http_gateway_port(9631);
 
         let sg_one = service_group.clone(); // ServiceGroup::new("shield", "one", None).unwrap();
+        let tagged_ports = HashMap::new();
 
         let service_store: RumorStore<ServiceRumor> = RumorStore::default();
-        let service_one = ServiceRumor::new("member-a", &pg_id, &sg_one, &sys_info, None);
+        let service_one = ServiceRumor::new("member-a", &pg_id, &sg_one, &sys_info, None, &tagged_ports);
         service_store.insert(service_one);
 
         let election_store: RumorStore<ElectionRumor> = RumorStore::default();
@@ -1320,6 +1324,15 @@ echo "The message is Hola Mundo"
         let election_update_store: RumorStore<ElectionUpdateRumor> = RumorStore::default();
 
         let member_list = MemberList::new();
+        let mut zone_list = ZoneList::new();
+        let zone_uuid = BfUuid::generate();
+        let zone = Zone::new(zone_uuid.to_string(), "member-a".to_string());
+        let mut member_a = Member::default();
+
+        member_a.set_id("member-a".to_string());
+        member_a.set_zone_id(zone_uuid.to_string());
+        member_list.insert(member_a, Health::Alive);
+        zone_list.insert(zone);
 
         let service_config_store: RumorStore<ServiceConfigRumor> = RumorStore::default();
         let service_file_store: RumorStore<ServiceFileRumor> = RumorStore::default();
@@ -1332,6 +1345,7 @@ echo "The message is Hola Mundo"
             &member_list,
             &service_config_store,
             &service_file_store,
+            &zone_list,
         );
 
         let bindings = iter::empty::<&ServiceBind>();
@@ -1414,9 +1428,10 @@ echo "The message is Hello"
         sys_info.set_http_gateway_port(9631);
 
         let sg_one = service_group.clone(); // ServiceGroup::new("shield", "one", None).unwrap();
+        let tagged_ports = HashMap::new();
 
         let service_store: RumorStore<ServiceRumor> = RumorStore::default();
-        let service_one = ServiceRumor::new("member-a", &pg_id, &sg_one, &sys_info, None);
+        let service_one = ServiceRumor::new("member-a", &pg_id, &sg_one, &sys_info, None, &tagged_ports);
         service_store.insert(service_one);
 
         let election_store: RumorStore<ElectionRumor> = RumorStore::default();
@@ -1427,6 +1442,15 @@ echo "The message is Hello"
         let election_update_store: RumorStore<ElectionUpdateRumor> = RumorStore::default();
 
         let member_list = MemberList::new();
+        let mut zone_list = ZoneList::new();
+        let zone_uuid = BfUuid::generate();
+        let zone = Zone::new(zone_uuid.to_string(), "member-a".to_string());
+        let mut member_a = Member::default();
+
+        member_a.set_id("member-a".to_string());
+        member_a.set_zone_id(zone_uuid.to_string());
+        member_list.insert(member_a, Health::Alive);
+        zone_list.insert(zone);
 
         let service_config_store: RumorStore<ServiceConfigRumor> = RumorStore::default();
         let service_file_store: RumorStore<ServiceFileRumor> = RumorStore::default();
@@ -1439,6 +1463,7 @@ echo "The message is Hello"
             &member_list,
             &service_config_store,
             &service_file_store,
+            &zone_list,
         );
 
         let bindings = iter::empty::<&ServiceBind>();
