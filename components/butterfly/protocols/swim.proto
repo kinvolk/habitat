@@ -50,9 +50,7 @@ message PingReq {
 message ZoneChange {
   optional Member from = 1;
   optional string zone_id = 2;
-  optional Zone new_successor = 3;
-  repeated Zone new_predecessors = 4;
-  repeated string drop_predecessors = 5;
+  repeated Zone new_aliases = 3;
 }
 
 message Membership {

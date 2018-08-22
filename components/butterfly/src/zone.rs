@@ -17,11 +17,8 @@
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
-use uuid::Uuid;
-
-use message::{self,
-              swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumorType, Zone as ProtoZone},
-              UuidSimple};
+use message::{swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumorType, Zone as ProtoZone},
+              BfUuid, UuidSimple};
 use rumor::RumorKey;
 
 /// A zone in the swim group. Passes most of its functionality along
@@ -40,8 +37,8 @@ impl Zone {
         Zone { proto: proto_zone }
     }
 
-    pub fn get_uuid(&self) -> Uuid {
-        message::parse_uuid(self.proto.get_id(), "zone ID")
+    pub fn get_uuid(&self) -> BfUuid {
+        BfUuid::parse_or_nil(self.proto.get_id(), "zone ID")
     }
 }
 

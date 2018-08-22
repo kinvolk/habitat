@@ -14,39 +14,78 @@
 
 pub mod swim;
 
+use std::fmt::{Display, Result as FmtResult, Formatter};
 use std::result;
-use std::str;
+use std::str::{self, FromStr};
 
 use habitat_core::crypto::SymKey;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use toml;
-use uuid::Uuid;
+use uuid::{ParseError, Uuid};
 
 use error::Result;
 use message::swim::Wire;
 use protobuf::{self, Message};
 
-// This is a Uuid type turned to a string
-pub type UuidSimple = String;
-
-pub fn nil_uuid() -> UuidSimple {
-    Uuid::nil().simple().to_string()
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BfUuid {
+    uuid: Uuid
 }
 
-pub fn generate_uuid() -> UuidSimple {
-    Uuid::new_v4().simple().to_string()
+impl BfUuid {
+    pub fn nil() -> Self {
+        Self {
+            uuid: Uuid::nil(),
+        }
+    }
+
+    pub fn generate() -> Self {
+        Self {
+            uuid: Uuid::new_v4(),
+        }
+    }
+
+    pub fn parse_or_nil(input: &str, what: &str) -> Self {
+        match input.parse::<Self>() {
+            Ok(u) => u,
+            Err(e) => {
+                error!("Cannot parse {} {} as UUID: {}", what, input, e);
+                BfUuid::nil()
+            }
+        }
+    }
+
+    pub fn must_parse(input: &str) -> Self {
+        match input.parse::<Self>() {
+            Ok(u) => u,
+            Err(e) => panic!("Cannot parse {} as UUID: {}", input, e),
+        }
+    }
+
+    pub fn is_nil(&self) -> bool {
+        self.uuid.is_nil()
+    }
 }
 
-pub fn parse_uuid(input: &str, what: &str) -> Uuid {
-    match Uuid::parse_str(input) {
-        Ok(u) => u,
-        Err(e) => {
-            error!("Zone: cannot parse {}: {}, {}", what, input, e);
-            Uuid::nil()
+impl Display for BfUuid {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.uuid.simple())
+    }
+}
+
+impl FromStr for BfUuid {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
+        Self {
+            uuid: s.parse()?,
         }
     }
 }
+
+// This is a Uuid type turned to a string
+pub type UuidSimple = String;
 
 pub fn generate_wire(payload: Vec<u8>, ring_key: Option<&SymKey>) -> Result<Vec<u8>> {
     let mut wire = Wire::new();
