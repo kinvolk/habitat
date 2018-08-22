@@ -28,11 +28,16 @@ use rand::{thread_rng, Rng};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use time::SteadyTime;
-use uuid::Uuid;
 
 use error::Error;
-use message::swim::{Member as ProtoMember, Membership as ProtoMembership,
-                    Membership_Health as ProtoMembership_Health, Rumor_Type};
+use message::{
+    swim::{
+        Member as ProtoMember, Membership as ProtoMembership,
+        Membership_Health as ProtoMembership_Health, Rumor_Type,
+        ZoneAddress,
+    },
+    BfUuid, UuidSimple,
+};
 use network::{AddressAndPort, MyFromStr};
 use rumor::RumorKey;
 
@@ -120,6 +125,37 @@ impl fmt::Display for Health {
     }
 }
 
+trait PortGetter {
+    fn get_port_from_zone_address(&self, zone_address: &ZoneAddress) -> u16;
+    fn get_port_from_member(&self, member: &Member) -> u16;
+}
+
+#[derive(Copy, Clone)]
+struct SWIMPortGetter {}
+
+impl PortGetter for SWIMPortGetter {
+    fn get_port_from_zone_address(&self, zone_address: &ZoneAddress) -> u16 {
+        zone_address.get_swim_port() as u16
+    }
+
+    fn get_port_from_member(&self, member: &Member) -> u16 {
+        member.get_swim_port() as u16
+    }
+}
+
+#[derive(Copy, Clone)]
+struct GossipPortGetter {}
+
+impl PortGetter for GossipPortGetter {
+    fn get_port_from_zone_address(&self, zone_address: &ZoneAddress) -> u16 {
+        zone_address.get_gossip_port() as u16
+    }
+
+    fn get_port_from_member(&self, member: &Member) -> u16 {
+        member.get_gossip_port() as u16
+    }
+}
+
 /// A member in the swim group. Passes most of its functionality along to the internal protobuf
 /// representation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -135,7 +171,7 @@ impl Member {
     /// This function panics if the address is un-parseable. In practice, it shouldn't be
     /// un-parseable, since its set from the inbound socket directly.
     pub fn swim_socket_address<T: AddressAndPort>(&self) -> T {
-        self.socket_address(self.get_swim_port())
+        self.socket_address(SWIMPortGetter{})
     }
 
     /// Returns the gossip socket address of this member.
@@ -145,27 +181,69 @@ impl Member {
     /// This function panics if the address is un-parseable. In practice, it shouldn't be
     /// un-parseable, since its set from the inbound socket directly.
     pub fn gossip_socket_address<T: AddressAndPort>(&self) -> T {
-        self.socket_address(self.get_gossip_port())
+        self.socket_address(GossipPortGetter{})
     }
 
-    fn socket_address<T>(&self, port: i32) -> T
+    pub fn swim_socket_address_for_zone<T: AddressAndPort>(&self, zone_id: &str) -> Option<T> {
+        self.socket_address_for_zone(zone_id, SWIMPortGetter{})
+    }
+
+    pub fn gossip_socket_address_for_zone<T: AddressAndPort>(&self, zone_id: &str) -> Option<T> {
+        self.socket_address_for_zone(zone_id, GossipPortGetter{})
+    }
+
+    fn socket_address<T, P>(&self, port_getter: P) -> T
     where
         T: AddressAndPort,
+        P: PortGetter,
     {
         match T::Address::create_from_str(self.get_address()) {
-            Ok(addr) => T::new_from_address_and_port(addr, port as u16),
+            Ok(addr) => T::new_from_address_and_port(addr, port_getter.get_port_from_member(&self)),
             Err(e) => {
                 panic!("Cannot parse member {:?} address: {}", self, e);
             }
         }
+    }
+
+    fn socket_address_for_zone<T, P>(&self, zone_id: &str, port_getter: P) -> Option<T>
+    where T: AddressAndPort,
+          P: PortGetter,
+    {
+        if zone_id == self.get_zone_id() {
+            return Some(self.socket_address(port_getter));
+        }
+
+        for zone_address in self.get_additional_addresses() {
+            if zone_address.get_zone_id() != zone_id {
+                continue;
+            }
+            if !zone_address.has_address() {
+                break;
+            }
+            match T::Address::create_from_str(zone_address.get_address()) {
+                Ok(addr) => {
+                    return Some(T::new_from_address_and_port(
+                        addr,
+                        port_getter.get_port_from_zone_address(&zone_address),
+                    ))
+                }
+                Err(e) => {
+                    error!("Cannot parse member {:?} additional address: {}", self, e);
+                    break;
+                }
+            }
+        }
+
+        return None;
     }
 }
 
 impl Default for Member {
     fn default() -> Self {
         let mut proto_member = ProtoMember::new();
-        proto_member.set_id(Uuid::new_v4().simple().to_string());
+        proto_member.set_id(BfUuid::generate().to_string());
         proto_member.set_incarnation(0);
+        proto_member.set_zone_id(BfUuid::nil().to_string());
         Member {
             proto: proto_member,
         }
@@ -217,9 +295,6 @@ impl<'a> From<&'a &'a Member> for RumorKey {
         RumorKey::new(Rumor_Type::Member, member.get_id(), "")
     }
 }
-
-// This is a Uuid type turned to a string
-pub type UuidSimple = String;
 
 /// Tracks lists of members, their health, and how long they have been suspect.
 #[derive(Debug, Clone)]
@@ -593,7 +668,8 @@ impl MemberList {
         for member in members
             .into_iter()
             .filter(|m| {
-                m.get_id() != sending_member_id && m.get_id() != target_member_id
+                m.get_id() != sending_member_id
+                    && m.get_id() != target_member_id
                     && self.check_health_of_by_id(m.get_id(), Health::Alive)
             })
             .take(PINGREQ_TARGETS)
@@ -715,8 +791,7 @@ impl MemberList {
 mod tests {
     mod member {
         use member::Member;
-        use message::swim;
-        use uuid::Uuid;
+        use message::{swim, BfUuid};
 
         // Sets the uuid to simple, and the incarnation to zero.
         #[test]
@@ -730,8 +805,7 @@ mod tests {
         #[test]
         fn new_from_proto() {
             let mut proto = swim::Member::new();
-            let uuid = Uuid::new_v4();
-            proto.set_id(uuid.simple().to_string());
+            proto.set_id(BfUuid::generate().to_string());
             proto.set_incarnation(0);
             let proto2 = proto.clone();
             let member: Member = proto.into();

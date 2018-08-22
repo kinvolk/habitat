@@ -25,8 +25,9 @@ use error::{Error, Result};
 use member::{Health, Member, MemberList};
 use message::swim::Membership as ProtoMembership;
 use network::Network;
-use rumor::{Departure, Election, ElectionUpdate, Rumor, RumorStore, Service, ServiceConfig,
-            ServiceFile};
+use rumor::{
+    Departure, Election, ElectionUpdate, Rumor, RumorStore, Service, ServiceConfig, ServiceFile,
+};
 use server::Server;
 
 const HEADER_VERSION: u8 = 2;

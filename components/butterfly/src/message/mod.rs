@@ -14,17 +14,74 @@
 
 pub mod swim;
 
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::result;
-use std::str;
+use std::str::{self, FromStr};
 
 use habitat_core::crypto::SymKey;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use toml;
+use uuid::{ParseError, Uuid};
 
 use error::Result;
 use message::swim::Wire;
 use protobuf::{self, Message};
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BfUuid {
+    uuid: Uuid,
+}
+
+impl BfUuid {
+    pub fn nil() -> Self {
+        Self { uuid: Uuid::nil() }
+    }
+
+    pub fn generate() -> Self {
+        Self {
+            uuid: Uuid::new_v4(),
+        }
+    }
+
+    pub fn parse_or_nil(input: &str, what: &str) -> Self {
+        match input.parse::<Self>() {
+            Ok(u) => u,
+            Err(e) => {
+                error!("Cannot parse {} {} as UUID: {}", what, input, e);
+                BfUuid::nil()
+            }
+        }
+    }
+
+    pub fn must_parse(input: &str) -> Self {
+        match input.parse::<Self>() {
+            Ok(u) => u,
+            Err(e) => panic!("Cannot parse {} as UUID: {}", input, e),
+        }
+    }
+
+    pub fn is_nil(&self) -> bool {
+        self.uuid.is_nil()
+    }
+}
+
+impl Display for BfUuid {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.uuid.simple())
+    }
+}
+
+impl FromStr for BfUuid {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> result::Result<Self, Self::Err> {
+        Ok(Self { uuid: s.parse()? })
+    }
+}
+
+// This is a Uuid type turned to a string
+pub type UuidSimple = String;
 
 pub fn generate_wire(payload: Vec<u8>, ring_key: Option<&SymKey>) -> Result<Vec<u8>> {
     let mut wire = Wire::new();
@@ -69,13 +126,47 @@ impl Serialize for swim::Member {
     where
         S: Serializer,
     {
-        let mut strukt = serializer.serialize_struct("member", 6)?;
+        let mut strukt = serializer.serialize_struct("member", 8)?;
         strukt.serialize_field("id", self.get_id())?;
         strukt.serialize_field("incarnation", &self.get_incarnation())?;
         strukt.serialize_field("address", self.get_address())?;
         strukt.serialize_field("swim_port", &self.get_swim_port())?;
         strukt.serialize_field("gossip_port", &self.get_gossip_port())?;
         strukt.serialize_field("persistent", &self.get_persistent())?;
+        strukt.serialize_field("zone_id", self.get_zone_id())?;
+        strukt.serialize_field("additional_addresses", self.get_additional_addresses())?;
+        strukt.end()
+    }
+}
+
+impl Serialize for swim::ZoneAddress {
+    fn serialize<S>(&self, serializer: S) -> result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut strukt = serializer.serialize_struct("zone_address", 5)?;
+        strukt.serialize_field("zone_id", self.get_zone_id())?;
+        strukt.serialize_field("address", self.get_address())?;
+        strukt.serialize_field("swim_port", &self.get_swim_port())?;
+        strukt.serialize_field("gossip_port", &self.get_gossip_port())?;
+        strukt.serialize_field("tag", self.get_tag())?;
+        strukt.end()
+    }
+}
+
+impl Serialize for swim::Zone {
+    fn serialize<S>(&self, serializer: S) -> result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut strukt = serializer.serialize_struct("zone", 7)?;
+        strukt.serialize_field("id", self.get_id())?;
+        strukt.serialize_field("incarnation", &self.get_incarnation())?;
+        strukt.serialize_field("maintainer_id", self.get_maintainer_id())?;
+        strukt.serialize_field("parent_zone_id", self.get_parent_zone_id())?;
+        strukt.serialize_field("child_zone_ids", self.get_child_zone_ids())?;
+        strukt.serialize_field("successor", self.get_successor())?;
+        strukt.serialize_field("predecessors", self.get_predecessors())?;
         strukt.end()
     }
 }
