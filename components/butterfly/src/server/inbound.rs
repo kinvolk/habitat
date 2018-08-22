@@ -180,7 +180,7 @@ impl<N: Network> Inbound<N> {
 
     /// Process ack messages; forwards to the outbound thread.
     fn process_ack(&self, addr: N::AddressAndPort, mut msg: Swim) {
-        if !self.handle_zone(msg.get_zones(), msg.get_ack().get_from().get_zone_id()) {
+        if !self.handle_zone_for_recipient(msg.get_zones(), msg.get_ack().get_from().get_zone_id(), msg.get_ack().get_to().get_address()) {
             error!(
                 "Supervisor {} sent an Ack with a nil zone ID",
                 msg.get_ack().get_from().get_id(),
@@ -246,7 +246,7 @@ impl<N: Network> Inbound<N> {
     /// Process ping messages.
     fn process_ping(&self, addr: N::AddressAndPort, mut msg: Swim) {
         let target: Member = msg.get_ping().get_from().into();
-        let insert_pinger = self.handle_zone(msg.get_zones(), msg.get_ping().get_from().get_zone_id());
+        let insert_pinger = self.handle_zone_for_recipient(msg.get_zones(), msg.get_ping().get_from().get_zone_id(), msg.get_ping().get_to().get_address());
         trace_it!(SWIM: &self.server,
                   TraceKind::RecvPing,
                   msg.get_ack().get_from().get_id(),
@@ -290,7 +290,21 @@ impl<N: Network> Inbound<N> {
         }
     }
 
-    fn handle_zone(&self, zones: &[ProtoZone], sender_zone_id: &str) -> bool {
+    fn handle_zone_for_recipient(&self, zones: &[ProtoZone], sender_zone_id: &str, our_recipient_address: &str) -> bool {
+        let sender_in_the_same_zone_as_us = {
+            match <<N as Network>::AddressAndPort as AddressAndPort>::Address::create_from_str(our_recipient_address) {
+                Ok(addr) => addr == self.server.host_address,
+                Err(e) => {
+                    error!("Error parsing recipient address {}: {}", our_recipient_address, e);
+                    false
+                }
+            }
+        };
+
+        self.handle_zone(zones, sender_zone_id, sender_in_the_same_zone_as_us)
+    }
+
+    fn handle_zone(&self, zones: &[ProtoZone], sender_zone_id: &str, sender_in_the_same_zone_as_us: bool) -> bool {
         // scenarios:
         // 0a. sender has nil id, i'm not settled
         //   - generate my own zone id
@@ -314,7 +328,6 @@ impl<N: Network> Inbound<N> {
         let mut member_zone_changed = false;
         let mut old_zone_is_dead = false;
         let mut insert_member_zone = false;
-        let sender_in_the_same_zone_as_us = true;
         let mut insert_sender_member = true;
         let mut maybe_sender_zone = Self::get_zone_from_protozones(zones, sender_zone_id);
 

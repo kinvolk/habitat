@@ -72,6 +72,7 @@ pub struct Server<N: Network> {
     pub member_list: MemberList,
     pub zone_settled: Arc<RwLock<bool>>,
     pub zone_list: Arc<RwLock<ZoneList>>,
+    pub host_address: <<N as Network>::AddressAndPort as AddressAndPort>::Address,
     ring_key: Arc<Option<SymKey>>,
     rumor_heat: RumorHeat,
     pub service_store: RumorStore<Service>,
@@ -103,6 +104,7 @@ impl<N: Network> Clone for Server<N> {
             member_list: self.member_list.clone(),
             zone_settled: self.zone_settled.clone(),
             zone_list: self.zone_list.clone(),
+            host_address: self.host_address.clone(),
             ring_key: self.ring_key.clone(),
             rumor_heat: self.rumor_heat.clone(),
             service_store: self.service_store.clone(),
@@ -131,6 +133,7 @@ impl<N: Network> Server<N> {
     /// `Trace` struct, a ring_key if you want encryption on the wire, and an optional server name.
     pub fn new<P>(
         network: N,
+        host_address: <<N as Network>::AddressAndPort as AddressAndPort>::Address,
         mut member: Member,
         trace: Trace,
         ring_key: Option<SymKey>,
@@ -150,6 +153,7 @@ impl<N: Network> Server<N> {
             member_list: MemberList::new(),
             zone_settled: Arc::new(RwLock::new(false)),
             zone_list: Arc::new(RwLock::new(ZoneList::new())),
+            host_address: host_address,
             ring_key: Arc::new(ring_key),
             rumor_heat: RumorHeat::default(),
             service_store: RumorStore::default(),
@@ -1102,14 +1106,13 @@ mod tests {
     mod server {
         use habitat_core::service::ServiceGroup;
         use member::Member;
-        use network::RealNetwork;
+        use network::{Network, RealNetwork};
         use server::timing::Timing;
         use server::{Server, Suitability};
         use std::net::{IpAddr, Ipv4Addr, SocketAddr};
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
         use trace::Trace;
-        use zone::Zone;
 
         static SWIM_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
         static GOSSIP_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -1133,8 +1136,10 @@ mod tests {
             member.set_swim_port(swim_port as i32);
             member.set_gossip_port(gossip_port as i32);
             let network = RealNetwork::new_for_server(swim_listen, gossip_listen);
+            let host_address = network.get_host_address().expect("Cannot get real host address");
             Server::new(
                 network,
+                host_address,
                 member,
                 Trace::default(),
                 None,
