@@ -35,7 +35,7 @@ use std::result;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::channel;
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -46,7 +46,7 @@ use serde::{Serialize, Serializer};
 
 use error::{Error, Result};
 use member::{Health, Member, MemberList};
-use message;
+use message::{self, UuidSimple};
 use network::{AddressAndPort, Network};
 use rumor::dat_file::DatFile;
 use rumor::departure::Departure;
@@ -57,6 +57,7 @@ use rumor::service_config::ServiceConfig;
 use rumor::service_file::ServiceFile;
 use rumor::{Rumor, RumorKey, RumorStore};
 use trace::{Trace, TraceKind};
+use zone::{Zone, ZoneList};
 
 pub trait Suitability: Debug + Send + Sync {
     fn get(&self, service_group: &ServiceGroup) -> u64;
@@ -69,6 +70,8 @@ pub struct Server<N: Network> {
     member_id: Arc<String>,
     pub member: Arc<RwLock<Member>>,
     pub member_list: MemberList,
+    pub zone_settled: Arc<RwLock<bool>>,
+    pub zone_list: Arc<RwLock<ZoneList>>,
     ring_key: Arc<Option<SymKey>>,
     rumor_heat: RumorHeat,
     pub service_store: RumorStore<Service>,
@@ -98,6 +101,8 @@ impl<N: Network> Clone for Server<N> {
             member_id: self.member_id.clone(),
             member: self.member.clone(),
             member_list: self.member_list.clone(),
+            zone_settled: self.zone_settled.clone(),
+            zone_list: self.zone_list.clone(),
             ring_key: self.ring_key.clone(),
             rumor_heat: self.rumor_heat.clone(),
             service_store: self.service_store.clone(),
@@ -143,6 +148,8 @@ impl<N: Network> Server<N> {
             member_id: Arc::new(String::from(member.get_id())),
             member: Arc::new(RwLock::new(member)),
             member_list: MemberList::new(),
+            zone_settled: Arc::new(RwLock::new(false)),
+            zone_list: Arc::new(RwLock::new(ZoneList::new())),
             ring_key: Arc::new(ring_key),
             rumor_heat: RumorHeat::default(),
             service_store: RumorStore::default(),
@@ -371,6 +378,14 @@ impl<N: Network> Server<N> {
         self.network.read().expect("Network lock is poisoned")
     }
 
+    pub fn read_zone_list(&self) -> RwLockReadGuard<ZoneList> {
+        self.zone_list.read().expect("Zone list lock is poisoned")
+    }
+
+    pub fn write_zone_list(&self) -> RwLockWriteGuard<ZoneList> {
+        self.zone_list.write().expect("Zone list lock is poisoned")
+    }
+
     /// Return the member ID of this server.
     pub fn member_id(&self) -> &str {
         &self.member_id
@@ -379,6 +394,14 @@ impl<N: Network> Server<N> {
     /// Return the name of this server.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn insert_zone(&self, zone: Zone) {
+        let rk = RumorKey::from(&zone);
+        if self.write_zone_list().insert(zone) {
+            // TODO: tracing
+            self.rumor_heat.start_hot_rumor(rk);
+        }
     }
 
     /// Insert a member to the `MemberList`, and update its `RumorKey` appropriately.
@@ -465,6 +488,31 @@ impl<N: Network> Server<N> {
     }
 
     /// Given a membership record and some health, insert it into the Member List.
+    fn insert_zone_from_rumor(&self, zone: Zone) {
+        let rk: RumorKey = RumorKey::from(&zone);
+
+        // TODO(krnowak): if this is our zone and it has the
+        // dead_in_favor_of field set, then figure out the successor
+        // and update the member accordingly, see
+        // insert_member_from_rumor
+        // NOTE: This sucks so much right here. Check out how we allocate no matter what, because
+        // of just how the logic goes. The value of the trace is really high, though, so we suck it
+        // for now.
+        let trace_zone_id = String::from(zone.get_id());
+        let trace_incarnation = zone.get_incarnation();
+
+        if self.write_zone_list().insert(zone) {
+            trace_it!(
+                ZONES: self,
+                TraceKind::ZoneUpdate,
+                trace_zone_id,
+                trace_incarnation
+            );
+            self.rumor_heat.start_hot_rumor(rk);
+        }
+    }
+
+    /// Given a membership record and some health, insert it into the Member List.
     fn insert_member_from_rumor(&self, member: Member, mut health: Health) {
         let mut incremented_incarnation = false;
         let rk: RumorKey = RumorKey::from(&member);
@@ -494,6 +542,13 @@ impl<N: Network> Server<N> {
                 trace_health
             );
             self.rumor_heat.start_hot_rumor(rk);
+        }
+    }
+
+    /// Insert zones from a list of received rumors.
+    fn insert_zones_from_rumors(&self, zones: Vec<Zone>) {
+        for zone in zones {
+            self.insert_zone_from_rumor(zone);
         }
     }
 
@@ -943,9 +998,58 @@ impl<N: Network> Server<N> {
         }
     }
 
+    pub fn write_zone_settled(&self) -> RwLockWriteGuard<bool> {
+        self.zone_settled
+            .write()
+            .expect("Zone settled lock is poisoned")
+    }
+
+    pub fn read_zone_settled(&self) -> RwLockReadGuard<bool> {
+        self.zone_settled
+            .read()
+            .expect("Zone settled lock is poisoned")
+    }
+
+    pub fn settle_zone(&self) -> bool {
+        if self.is_zone_settled() {
+            false
+        } else {
+            *(self.zone_settled
+                .write()
+                .expect("Zone state lock is poisoned")) = true;
+            true
+        }
+    }
+
+    pub fn get_settled_zone_id(&self) -> UuidSimple {
+        if self.is_zone_settled() {
+            self.member
+                .read()
+                .expect("Member lock is poisoned")
+                .get_zone_id()
+                .to_owned()
+        } else {
+            message::nil_uuid()
+        }
+    }
+
+    pub fn is_zone_settled(&self) -> bool {
+        *(self.zone_settled
+            .read()
+            .expect("Zone settled lock is poisoned"))
+    }
+
     #[allow(dead_code)]
     pub fn is_departed(&self) -> bool {
         self.departed.load(Ordering::Relaxed)
+    }
+
+    pub fn read_member(&self) -> RwLockReadGuard<Member> {
+        self.member.read().expect("Member lock is poisoned")
+    }
+
+    pub fn write_member(&self) -> RwLockWriteGuard<Member> {
+        self.member.write().expect("Member lock is poisoned")
     }
 }
 
@@ -1005,6 +1109,7 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
         use trace::Trace;
+        use zone::Zone;
 
         static SWIM_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
         static GOSSIP_PORT: AtomicUsize = ATOMIC_USIZE_INIT;

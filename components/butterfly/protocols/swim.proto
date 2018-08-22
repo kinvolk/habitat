@@ -1,5 +1,12 @@
 syntax = "proto2";
 
+message ZoneAddress {
+  optional string zone_id = 1;
+  optional string address = 2;
+  optional int32 swim_port = 3;
+  optional int32 gossip_port = 4;
+}
+
 message Member {
   optional string id = 1;
   optional uint64 incarnation = 2;
@@ -8,21 +15,35 @@ message Member {
   optional int32 gossip_port = 5;
   optional bool persistent = 6 [default = false];
   optional bool departed = 7 [default = false];
+  optional string zone_id = 8;
+  repeated ZoneAddress additional_addresses = 9;
+}
+
+message Zone {
+  optional string id = 1;
+  optional uint64 incarnation = 2;
+  optional string maintainer_id = 3;
+  optional string parent_zone_id = 4;
+  repeated string child_zone_ids = 5;
+  optional string dead_in_favor_of = 6;
 }
 
 message Ping {
   optional Member from = 1;
   optional Member forward_to = 2;
+  optional Member to = 3;
 }
 
 message Ack {
   optional Member from = 1;
   optional Member forward_to = 2;
+  optional Member to = 3;
 }
 
 message PingReq {
   optional Member from = 1;
   optional Member target = 2;
+  optional Member to = 3;
 }
 
 message Membership {
@@ -74,9 +95,10 @@ message SysInfo {
   optional string gossip_ip = 3 [default = "127.0.0.1"];
   optional uint32 gossip_port = 4;
   optional string http_gateway_ip = 5 [default = "127.0.0.1"];
-  optional uint32 http_gateway_port = 6; 
+  optional uint32 http_gateway_port = 6;
   optional string ctl_gateway_ip = 7 [default = "127.0.0.1"];
   optional uint32 ctl_gateway_port = 8 [default = 9632];
+  repeated ZoneAddress additional_addresses = 9;
 }
 
 message Departure {
@@ -94,6 +116,7 @@ message Swim {
     PingReq pingreq = 4;
   }
   repeated Membership membership = 5;
+  repeated Zone zones = 6;
 }
 
 message Rumor {
@@ -107,6 +130,7 @@ message Rumor {
     Fake2 = 7;
     ElectionUpdate = 8;
     Departure = 9;
+    Zone = 10;
   }
 
   required Type type = 1;
@@ -119,6 +143,7 @@ message Rumor {
     ServiceFile service_file = 7;
     Election election = 8;
     Departure departure = 9;
+    Zone zone = 10;
   }
 }
 

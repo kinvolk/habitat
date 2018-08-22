@@ -28,11 +28,12 @@ use rand::{thread_rng, Rng};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use time::SteadyTime;
-use uuid::Uuid;
 
 use error::Error;
-use message::swim::{Member as ProtoMember, Membership as ProtoMembership,
-                    Membership_Health as ProtoMembership_Health, Rumor_Type};
+use message::{self,
+              swim::{Member as ProtoMember, Membership as ProtoMembership,
+                     Membership_Health as ProtoMembership_Health, Rumor_Type},
+              UuidSimple};
 use network::{AddressAndPort, MyFromStr};
 use rumor::RumorKey;
 
@@ -164,8 +165,9 @@ impl Member {
 impl Default for Member {
     fn default() -> Self {
         let mut proto_member = ProtoMember::new();
-        proto_member.set_id(Uuid::new_v4().simple().to_string());
+        proto_member.set_id(message::generate_uuid());
         proto_member.set_incarnation(0);
+        proto_member.set_zone_id(message::nil_uuid());
         Member {
             proto: proto_member,
         }
@@ -217,9 +219,6 @@ impl<'a> From<&'a &'a Member> for RumorKey {
         RumorKey::new(Rumor_Type::Member, member.get_id(), "")
     }
 }
-
-// This is a Uuid type turned to a string
-pub type UuidSimple = String;
 
 /// Tracks lists of members, their health, and how long they have been suspect.
 #[derive(Debug, Clone)]
@@ -715,8 +714,7 @@ impl MemberList {
 mod tests {
     mod member {
         use member::Member;
-        use message::swim;
-        use uuid::Uuid;
+        use message::{self, swim};
 
         // Sets the uuid to simple, and the incarnation to zero.
         #[test]
@@ -730,8 +728,7 @@ mod tests {
         #[test]
         fn new_from_proto() {
             let mut proto = swim::Member::new();
-            let uuid = Uuid::new_v4();
-            proto.set_id(uuid.simple().to_string());
+            proto.set_id(message::generate_uuid());
             proto.set_incarnation(0);
             let proto2 = proto.clone();
             let member: Member = proto.into();

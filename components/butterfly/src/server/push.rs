@@ -295,6 +295,28 @@ impl<N: Network> PushWorker<N> {
                     debug!("You have fake rumors; how odd!");
                     continue 'rumorlist;
                 }
+                ProtoRumor_Type::Zone => {
+                    let send_rumor = match self.create_zone_rumor(&rumor_key) {
+                        Some(rumor) => rumor,
+                        None => continue 'rumorlist,
+                    };
+                    trace_it!(
+                        GOSSIP: &self.server,
+                        TraceKind::SendRumor,
+                        member.get_id(),
+                        &send_rumor);
+                    match send_rumor.write_to_bytes() {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            println!(
+                                "Could not write our own rumor to bytes; abandoning \
+                                 sending rumor: {:?}",
+                                e
+                            );
+                            continue 'rumorlist;
+                        }
+                    }
+                }
             };
             let payload = match self.server.generate_wire(rumor_as_bytes) {
                 Ok(payload) => payload,
@@ -339,6 +361,19 @@ impl<N: Network> PushWorker<N> {
         let mut rumor = ProtoRumor::new();
         rumor.set_field_type(ProtoRumor_Type::Member);
         rumor.set_member(membership);
+        rumor.set_from_id(String::from(self.server.member_id()));
+        Some(rumor)
+    }
+
+    /// Given a rumorkey, creates a protobuf rumor for sharing.
+    fn create_zone_rumor(&self, rumor_key: &RumorKey) -> Option<ProtoRumor> {
+        let proto_zone = match self.server.read_zone_list().get(&rumor_key.id) {
+            Some(zone) => zone.proto.clone(),
+            None => return None,
+        };
+        let mut rumor = ProtoRumor::new();
+        rumor.set_field_type(ProtoRumor_Type::Zone);
+        rumor.set_zone(proto_zone);
         rumor.set_from_id(String::from(self.server.member_id()));
         Some(rumor)
     }

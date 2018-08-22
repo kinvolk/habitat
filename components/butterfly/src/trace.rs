@@ -30,6 +30,7 @@ use server::Server;
 #[derive(Debug, Clone, Copy)]
 pub enum TraceKind {
     MemberUpdate,
+    ZoneUpdate,
     ProbeBegin,
     ProbeAckReceived,
     ProbeComplete,
@@ -53,6 +54,7 @@ impl fmt::Display for TraceKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TraceKind::MemberUpdate => write!(f, "MemberUpdate"),
+            TraceKind::ZoneUpdate => write!(f, "ZoneUpdate"),
             TraceKind::ProbeBegin => write!(f, "ProbeBegin"),
             TraceKind::ProbeAckReceived => write!(f, "ProbeAckReceived"),
             TraceKind::ProbeConfirmed => write!(f, "ProbeConfirmed"),
@@ -283,6 +285,26 @@ macro_rules! trace_it {
         }
     }};
 
+    (ZONES: $server:expr, $msg_type:expr, $zone_id:expr, $zone_incar:expr) => {{
+        let trace_on = $server.trace.read().expect("Trace lock is poisoned").on();
+        if trace_on {
+            use trace::TraceWrite;
+            let mut trace = $server.trace.write().expect("Trace lock is poisoned");
+            trace.init($server);
+            let thread = thread::current();
+            let thread_name = thread.name().unwrap_or("undefined");
+            let member_id = $server.member_id();
+            let server_name = $server.name();
+            let rumor_text = format!("{}-{}", $zone_id, $zone_incar);
+
+            let mut tw = TraceWrite::new($msg_type, module_path!(), line!(), thread_name);
+            tw.server_name = Some(&server_name);
+            tw.member_id = Some(member_id);
+            tw.rumor = Some(&rumor_text);
+            trace.write(tw);
+        }
+    }};
+
     (PROBE: $server:expr, $msg_type:expr, $to_member_id:expr, $to_addr:expr) => {{
         let trace_on = $server.trace.read().expect("Trace lock is poisoned").on();
         if trace_on {
@@ -390,6 +412,11 @@ macro_rules! trace_it {
                 ),
                 Rumor_Type::Departure => format!("{}", $payload.get_departure().get_member_id()),
                 Rumor_Type::Fake | Rumor_Type::Fake2 => format!("nothing-to-see"),
+                Rumor_Type::Zone => format!(
+                    "{}-{}",
+                    $payload.get_zone().get_id(),
+                    $payload.get_zone().get_incarnation()
+                ),
             };
 
             let mut tw = TraceWrite::new($msg_type, module_path!(), line!(), thread_name);
