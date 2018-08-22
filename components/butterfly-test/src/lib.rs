@@ -20,6 +20,7 @@ extern crate habitat_core;
 extern crate libc;
 extern crate time;
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut, Range};
 use std::path::PathBuf;
@@ -33,7 +34,7 @@ use time::SteadyTime;
 
 use habitat_butterfly::client::Client;
 use habitat_butterfly::member::{Health, Member};
-use habitat_butterfly::message::swim::Election_Status;
+use habitat_butterfly::message::{BfUuid, swim::Election_Status};
 use habitat_butterfly::network::{GossipZmqSocket, Network, RealNetwork};
 use habitat_butterfly::rumor::departure::Departure;
 use habitat_butterfly::rumor::service::{Service, SysInfo};
@@ -42,6 +43,7 @@ use habitat_butterfly::rumor::service_file::ServiceFile;
 use habitat_butterfly::server::timing::Timing;
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::trace::Trace;
+use habitat_butterfly::zone::Zone;
 use habitat_core::crypto::keys::sym_key::SymKey;
 use habitat_core::package::{Identifiable, PackageIdent};
 use habitat_core::service::ServiceGroup;
@@ -76,8 +78,10 @@ pub fn start_server(name: &str, ring_key: Option<SymKey>, suitability: u64) -> S
     member.set_swim_port(swim_port as i32);
     member.set_gossip_port(gossip_port as i32);
     let network = RealNetwork::new_for_server(listen_swim, listen_gossip);
+    let host_address = localhost_ip();
     let mut server = Server::new(
         network,
+        host_address,
         member,
         Trace::default(),
         ring_key,
@@ -92,8 +96,12 @@ pub fn start_server(name: &str, ring_key: Option<SymKey>, suitability: u64) -> S
 }
 
 fn localhost_addr(port: u16) -> SocketAddr {
-    let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+    let ip = localhost_ip();
     SocketAddr::new(ip, port)
+}
+
+fn localhost_ip() -> IpAddr {
+    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
 }
 
 pub fn member_from_server(server: &Server<RealNetwork>) -> Member {
@@ -104,7 +112,28 @@ pub fn member_from_server(server: &Server<RealNetwork>) -> Member {
     new_member.set_address(String::from("127.0.0.1"));
     new_member.set_swim_port(server.swim_port() as i32);
     new_member.set_gossip_port(server.gossip_port() as i32);
+    new_member.set_zone_id(String::from(server_member.get_zone_id()));
     new_member
+}
+
+fn generate_new_zone(server: &Server<RealNetwork>) -> Zone {
+    let new_uuid = BfUuid::generate();
+
+    Zone::new(new_uuid.to_string(), server.read_member().get_id().to_string())
+}
+
+fn setup_zone_in_server(zone: Zone, server: &Server<RealNetwork>) {
+    let zone_id = zone.get_id().to_string();
+
+    server.insert_zone(zone);
+    server.settle_zone();
+
+    let mut member = server.write_member();
+    let incarnation = member.get_incarnation();
+
+    member.set_incarnation(incarnation + 1);
+    member.set_zone_id(zone_id);
+    server.insert_member(member.clone(), Health::Alive);
 }
 
 #[derive(Debug)]
@@ -196,7 +225,34 @@ impl SwimNet {
         Self { members }
     }
 
+    fn setup_common_zone(&self, from_entry: usize, to_entry: usize) {
+        let from_zone_uuid = BfUuid::must_parse(self.members[from_entry].read_member().get_zone_id());
+        let to_zone_uuid = BfUuid::must_parse(self.members[to_entry].read_member().get_zone_id());
+
+        match (from_zone_uuid.is_nil(), to_zone_uuid.is_nil()) {
+            (true, true) => {
+                let new_zone = generate_new_zone(&self.members[from_entry]);
+
+                setup_zone_in_server(new_zone.clone(), &self.members[from_entry]);
+                setup_zone_in_server(new_zone, &self.members[to_entry]);
+            }
+            (true, false) => {
+                let zone = self.members[to_entry].read_zone_list().zones.get(&to_zone_uuid.to_string()).unwrap().clone();
+
+                setup_zone_in_server(zone, &self.members[from_entry]);
+            }
+            (false, true) => {
+                let zone = self.members[from_entry].read_zone_list().zones.get(&from_zone_uuid.to_string()).unwrap().clone();
+
+                setup_zone_in_server(zone, &self.members[to_entry]);
+            }
+            (false, false) => {
+            }
+        }
+    }
+
     pub fn connect(&mut self, from_entry: usize, to_entry: usize) {
+        self.setup_common_zone(from_entry, to_entry);
         let to = member_from_server(&self.members[to_entry]);
         trace_it!(TEST: &self.members[from_entry], format!("Connected {} {}", self.members[to_entry].name(), self.members[to_entry].member_id()));
         self.members[from_entry].insert_member(to, Health::Alive);
@@ -211,6 +267,28 @@ impl SwimNet {
     // Fully mesh the network
     pub fn mesh(&mut self) {
         trace_it!(TEST_NET: self, "Mesh");
+        {
+            let (zone, maybe_skip_pos) = match self.members.iter().enumerate().find(|(_, server)| {
+                !BfUuid::must_parse(server.read_member().get_zone_id()).is_nil()
+            }) {
+                Some((pos, server)) => {
+                    let zone_id = server.read_member().get_zone_id().to_string();
+
+                    (server.read_zone_list().zones.get(&zone_id).unwrap().clone(), Some(pos))
+                }
+                None => {
+                    (generate_new_zone(&self.members[0]), None)
+                }
+            };
+            for pos in 0..self.members.len() {
+                if let Some(skip_pos) = maybe_skip_pos {
+                    if skip_pos == pos {
+                        continue;
+                    }
+                }
+                setup_zone_in_server(zone.clone(), &self.members[pos]);
+            }
+        }
         for pos in 0..self.members.len() {
             let mut to_mesh: Vec<Member> = Vec::new();
             for x_pos in 0..self.members.len() {
@@ -276,7 +354,7 @@ impl SwimNet {
     }
 
     pub fn max_rounds(&self) -> isize {
-        4
+        5
     }
 
     pub fn max_gossip_rounds(&self) -> isize {
@@ -530,6 +608,7 @@ impl SwimNet {
             &sg,
             &SysInfo::default(),
             None,
+            &HashMap::new(),
         );
         self[member].insert_service(s);
     }
