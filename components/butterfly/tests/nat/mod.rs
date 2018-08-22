@@ -1,12 +1,11 @@
-extern crate habitat_butterfly;
-
 mod nat;
 
-use std::cmp::{self, Ordering};
+use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::error::Error as StdError;
-use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
+use std::iter;
 use std::path::PathBuf;
 use std::result::Result as StdResult;
 use std::str::FromStr;
@@ -16,14 +15,53 @@ use std::thread;
 use std::time::Duration;
 use std::u8;
 
+use protobuf;
+
 use habitat_butterfly::error::{Error, Result};
 use habitat_butterfly::member::{Health, Member};
-use habitat_butterfly::network::{AddressAndPort, GossipReceiver, GossipSender, MyFromStr, Network,
-                                 SwimReceiver, SwimSender};
+use habitat_butterfly::message::{
+    self,
+    swim::{Rumor, Swim},
+};
+use habitat_butterfly::network::{
+    Address, AddressAndPort, GossipReceiver, GossipSender, MyFromStr, Network, SwimReceiver,
+    SwimSender,
+};
 use habitat_butterfly::server::timing::Timing;
 use habitat_butterfly::server::{Server, Suitability};
 use habitat_butterfly::trace::Trace;
+use habitat_butterfly::zone::{AdditionalAddress, TaggedAddressesFromAddress};
+use habitat_core::crypto::SymKey;
 use habitat_core::service::ServiceGroup;
+
+struct DbgVec {
+    v: Vec<String>
+}
+
+impl DbgVec {
+    fn new(header: String) -> Self {
+        Self {
+            v: vec![
+                "==============================".to_string(),
+                header,
+                "==============================".to_string(),
+            ],
+        }
+    }
+
+    fn push<S: AsRef<str>>(&mut self, s: S) {
+        for line in s.as_ref().split('\n') {
+            self.v.push(line.to_string())
+        }
+    }
+}
+
+impl Drop for DbgVec {
+    fn drop(&mut self) {
+        self.push("==============================".to_string());
+        println!("{:#?}", self.v);
+    }
+}
 
 // ZoneID is a number that identifies a zone. Within a zone all the
 // supervisors can talk to each other. For the interzone
@@ -61,9 +99,10 @@ impl FromStr for ZoneID {
     type Err = String;
 
     fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        let raw_self = s.parse()
+        let raw_self = s
+            .parse()
             .map_err(|e| format!("'{}' is not a u8: {}", s, e))?;
-        if Self::is_raw_valid(raw_self) {
+        if !Self::is_raw_valid(raw_self) {
             return Err(format!("{} is not a valid ZoneID", raw_self));
         }
 
@@ -169,7 +208,7 @@ impl ZoneMap {
         assert_ne!(parent_id, child_id);
         self.ensure_zone(parent_id);
         self.ensure_zone(child_id);
-        assert!(!self.is_zone_child_of_mut(parent_id, child_id));
+        assert!(!self.is_zone_descendant_of_mut(parent_id, child_id));
         {
             let parent_zone = self.get_zone_mut(parent_id);
             parent_zone.children.insert(child_id);
@@ -181,6 +220,7 @@ impl ZoneMap {
         }
     }
 
+    /*
     // This is basically a duplication of the is_zone_child_of
     // function, but without locking the mutex. Locking of the mutex
     // can be skipped, because here we own a mutable reference to
@@ -201,16 +241,25 @@ impl ZoneMap {
         }
         false
     }
+     */
 
-    pub fn is_zone_child_of_mut(&mut self, child_id: ZoneID, parent_id: ZoneID) -> bool {
+    pub fn is_zone_child_of(&self, child_id: ZoneID, parent_id: ZoneID) -> bool {
+        self.get_zone_guard(parent_id).children.contains(&child_id)
+    }
+
+    pub fn is_zone_descendant_of_mut(
+        &mut self,
+        descendant_id: ZoneID,
+        ancestor_id: ZoneID,
+    ) -> bool {
         let mut queue = VecDeque::new();
-        queue.push_back(parent_id);
+        queue.push_back(ancestor_id);
         while let Some(id) = queue.pop_front() {
             let zone = self.get_zone_mut(id);
-            if zone.children.contains(&child_id) {
+            if zone.children.contains(&descendant_id) {
                 return true;
             }
-            queue.extend(zone.children.iter());
+            queue.extend(&zone.children);
         }
         false
     }
@@ -334,10 +383,11 @@ impl ZoneMap {
 struct TestAddrParseError {
     failed_string: String,
     reason: String,
+    idx: usize,
 }
 
 impl TestAddrParseError {
-    fn new<T1, T2>(failed_string: T1, reason: T2) -> Self
+    fn new<T1, T2>(failed_string: T1, reason: T2, idx: usize) -> Self
     where
         T1: Into<String>,
         T2: Into<String>,
@@ -345,30 +395,34 @@ impl TestAddrParseError {
         Self {
             failed_string: failed_string.into(),
             reason: reason.into(),
+            idx: idx,
         }
     }
 }
 
 impl Display for TestAddrParseError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let spaces = iter::repeat(' ').take(self.idx).collect::<String>();
         write!(
             f,
-            "failed to parse TestAddr from {}: {}",
-            self.failed_string, self.reason
+            "failed to parse TestAddr at idx {}: {}\n\
+             {}\n\
+             {}^",
+            self.idx, self.reason, self.failed_string, spaces,
         )
     }
 }
 
 impl StdError for TestAddrParseError {
     fn description(&self) -> &str {
-        "failed to parse TestAddr from some string for some reason"
+        "failed to parse TestAddr from some string at some index for some reason"
     }
 }
 
 #[derive(Debug)]
 struct TestAddrParts {
     address_type: String,
-    fields: Vec<String>,
+    fields: Vec<(String, String)>,
     port: Option<u16>,
 }
 
@@ -383,6 +437,9 @@ impl FromStr for TestAddrParts {
             AddressType,
             CloseBracket,
             OpenBrace,
+            FieldName,
+            FieldSeparator,
+            FieldValue,
             CloseBrace,
             Colon,
             Port,
@@ -391,49 +448,79 @@ impl FromStr for TestAddrParts {
         let final_states = vec![State::CloseBrace, State::Port];
         let mut address_type = String::new();
         let mut fields = Vec::new();
-        let mut field = String::new();
+        let mut field_name = String::new();
+        let mut field_value = String::new();
         let mut maybe_port = None;
 
-        for c in s.chars() {
+        for (idx, c) in s.chars().enumerate() {
             match state {
                 State::Start => match c {
                     '[' => state = State::OpenBracket,
-                    _ => return Err(Self::Err::new(s, "expected an opening bracket")),
+                    _ => return Err(Self::Err::new(s, "expected an opening bracket", idx)),
                 },
                 State::OpenBracket => match c {
                     'a' ... 'z' | '-' => {
                         address_type.push(c);
                         state = State::AddressType;
                     }
-                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type")),
+                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type", idx)),
                 }
                 State::AddressType => match c {
                     'a' ... 'z' | '-' => {
                         address_type.push(c);
                     }
                     ']' => state = State::CloseBracket,
-                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type, or a closing bracket")),
+                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type, or a closing bracket", idx)),
                 }
                 State::CloseBracket => match c {
                     '{' => state = State::OpenBrace,
-                    _ => return Err(Self::Err::new(s, "expected an opening brace for address contents")),
+                    _ => return Err(Self::Err::new(s, "expected an opening brace for address contents", idx)),
                 }
                 State::OpenBrace => match c {
-                    'a' ... 'z' | '0' ... '9' => field.push(c),
-                    ',' => {
-                        fields.push(field);
-                        field = String::new();
+                    'a' ... 'z' | '0' ... '9' | '-' | '_' => {
+                        field_name.push(c);
+                        state = State::FieldName;
+                    }
+                    '}' => state = State::CloseBrace,
+                    _ => return Err(Self::Err::new(s, "expected either a closing brace or ASCII alphanumeric char for a field", idx))
+                }
+                State::FieldName => match c {
+                    'a' ... 'z' | '0' ... '9' | '-' | '_' => field_name.push(c),
+                    ':' => state = State::FieldSeparator,
+                    _ => return Err(Self::Err::new(s, "expected field name or a colon", idx)),
+                }
+                State::FieldSeparator => match c {
+                    'a' ... 'z' | '0' ... '9' => {
+                        field_value.push(c);
+                        state = State::FieldValue;
                     }
                     '}' => {
-                        fields.push(field);
-                        field = String::new();
+                        fields.push((field_name, field_value));
+                        field_name = String::new();
+                        field_value = String::new();
                         state = State::CloseBrace;
                     }
-                    _ => return Err(Self::Err::new(s, "expected either a closing brace or ASCII alphanumeric char for a field"))
+                    _ => return Err(Self::Err::new(s, "expected field name or closing brace", idx)),
+                }
+                State::FieldValue => match c {
+                    'a' ... 'z' | '0' ... '9' => field_value.push(c),
+                    ',' => {
+                        fields.push((field_name, field_value));
+                        field_name = String::new();
+                        field_value = String::new();
+                        state = State::FieldName;
+                    }
+                    '}' => {
+                        fields.push((field_name, field_value));
+                        field_name = String::new();
+                        field_value = String::new();
+                        state = State::CloseBrace;
+                    }
+                    _ => return Err(Self::Err::new(s, "expected field value, field separator (,) or closing brace", idx)),
                 }
                 State::CloseBrace => match c {
                     ':' => state = State::Colon,
-                    _ => return Err(Self::Err::new(s, "expected a colon after the closing brace")),
+                    _ => return Err(Self::Err::new(s, "expected a colon after the closing brace", idx)),
                 }
                 State::Colon => match c {
                     '0' ... '9' => {
@@ -443,27 +530,40 @@ impl FromStr for TestAddrParts {
                         maybe_port = Some(port_str);
                         state = State::Port;
                     }
-                    _ => return Err(Self::Err::new(s, "expected a number after the colon")),
+                    _ => return Err(Self::Err::new(s, "expected a number after the colon", idx)),
                 }
                 State::Port => match c {
                     '0' ... '9' => maybe_port.as_mut().unwrap().push(c),
-                    _ => return Err(Self::Err::new(s, "expected a number for a port"))
+                    _ => return Err(Self::Err::new(s, "expected a number for a port", idx))
                 }
             }
         }
 
-        if final_states.contains(&state) {
-            return Err(Self::Err::new(s, "premature end of address string"));
+        if !final_states.contains(&state) {
+            let mut len = s.len();
+
+            if len > 0 {
+                len -= 1;
+            }
+            return Err(Self::Err::new(s, "premature end of address string", len));
         }
 
         let port = match maybe_port {
             Some(port_str) => {
                 let parsed_port = match port_str.parse::<u16>() {
                     Ok(port) => Ok(port),
-                    Err(e) => Err(Self::Err::new(
-                        s,
-                        format!("still failed to parse port into a u16 number: {}", e),
-                    )),
+                    Err(e) => {
+                        let mut len = s.len();
+
+                        if len > 0 {
+                            len -= 1;
+                        }
+                        Err(Self::Err::new(
+                            s,
+                            format!("still failed to parse port into a u16 number: {}", e),
+                            len,
+                        ))
+                    }
                 }?;
                 Some(parsed_port)
             }
@@ -475,6 +575,17 @@ impl FromStr for TestAddrParts {
             fields,
             port,
         })
+    }
+}
+
+fn field_name_check(actual: &str, expected: &str, idx: &str) -> StdResult<(), String> {
+    if actual != expected {
+        Err(format!(
+            "expected {} field to be '{}', got {}",
+            idx, expected, actual
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -507,10 +618,14 @@ impl TestPublicAddr {
             ));
         }
 
+        field_name_check(&parts.fields[0].0, "zone-id", "first")?;
         let zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get zone ID from first field: {}", e))?;
+        field_name_check(&parts.fields[1].0, "idx", "second")?;
         let idx = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get index from second field: {}", e))?;
 
@@ -540,7 +655,7 @@ impl TestPublicAddr {
 
 impl Display for TestPublicAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "[public]{{{}, {}}}", self.zone_id, self.idx)
+        write!(f, "[public]{{zone-id:{},idx:{}}}", self.zone_id, self.idx)
     }
 }
 
@@ -551,7 +666,7 @@ impl FromStr for TestPublicAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts)
-            .map_err(|e| Self::Err::new(s, format!("badly formed public address: {}", e)))
+            .map_err(|e| Self::Err::new(s, format!("badly formed public address: {}", e), 0))
     }
 }
 
@@ -588,10 +703,14 @@ impl TestLocalAddr {
             ));
         }
 
+        field_name_check(&parts.fields[0].0, "zone-id", "first")?;
         let zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get zone ID from first field: {}", e))?;
+        field_name_check(&parts.fields[1].0, "idx", "second")?;
         let idx = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get index from second field: {}", e))?;
 
@@ -621,7 +740,7 @@ impl TestLocalAddr {
 
 impl Display for TestLocalAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "[local]{{{}, {}}}", self.zone_id, self.idx)
+        write!(f, "[local]{{zone-id:{},idx:{}}}", self.zone_id, self.idx)
     }
 }
 
@@ -632,7 +751,7 @@ impl FromStr for TestLocalAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts)
-            .map_err(|e| Self::Err::new(s, format!("badly formed local address: {}", e)))
+            .map_err(|e| Self::Err::new(s, format!("badly formed local address: {}", e), 0))
     }
 }
 
@@ -672,10 +791,14 @@ impl TestPersistentMappingAddr {
             ));
         }
 
+        field_name_check(&parts.fields[0].0, "parent-zone-id", "first")?;
         let parent_zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get parent zone ID from first field: {}", e))?;
+        field_name_check(&parts.fields[1].0, "child-zone-id", "second")?;
         let child_zone_id = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get child zone ID from second field: {}", e))?;
 
@@ -703,7 +826,7 @@ impl Display for TestPersistentMappingAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "[perm-map]{{{}, {}}}",
+            "[perm-map]{{parent-zone-id:{},child-zone-id:{}}}",
             self.parent_zone_id, self.child_zone_id
         )
     }
@@ -716,7 +839,11 @@ impl FromStr for TestPersistentMappingAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts).map_err(|e| {
-            Self::Err::new(s, format!("badly formed persistent mapping address: {}", e))
+            Self::Err::new(
+                s,
+                format!("badly formed persistent mapping address: {}", e),
+                0,
+            )
         })
     }
 }
@@ -769,19 +896,29 @@ impl TestTemporaryMappingAddr {
             ));
         }
 
+        field_name_check(&parts.fields[0].0, "parent-zone-id", "first")?;
         let parent_zone_id = parts.fields[0]
+            .1
             .parse()
             .map_err(|e| format!("failed to get parent zone ID from first field: {}", e))?;
+        field_name_check(&parts.fields[1].0, "parent-server-idx", "second")?;
         let parent_server_idx = parts.fields[1]
+            .1
             .parse()
             .map_err(|e| format!("failed to get parent server index from second field: {}", e))?;
+        field_name_check(&parts.fields[2].0, "child-zone-id", "third")?;
         let child_zone_id = parts.fields[2]
+            .1
             .parse()
             .map_err(|e| format!("failed to get child zone ID from third field: {}", e))?;
+        field_name_check(&parts.fields[3].0, "child-server-idx", "fourth")?;
         let child_server_idx = parts.fields[3]
+            .1
             .parse()
             .map_err(|e| format!("failed to get child server index from fourth field: {}", e))?;
+        field_name_check(&parts.fields[4].0, "random-value", "fifth")?;
         let random_value = parts.fields[4]
+            .1
             .parse()
             .map_err(|e| format!("failed to get random u16 value from fifth field: {}", e))?;
 
@@ -807,7 +944,7 @@ impl Display for TestTemporaryMappingAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "[temp-map]{{{}, {}, {}, {}, {}}}",
+            "[temp-map]{{parent-zone-id:{},parent-server-idx:{},child-zone-id:{},child-server-idx:{},random-value:{}}}",
             self.parent_zone_id,
             self.parent_server_idx,
             self.child_zone_id,
@@ -824,7 +961,11 @@ impl FromStr for TestTemporaryMappingAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts).map_err(|e| {
-            Self::Err::new(s, format!("badly formed temporary mapping address: {}", e))
+            Self::Err::new(
+                s,
+                format!("badly formed temporary mapping address: {}", e),
+                0,
+            )
         })
     }
 }
@@ -877,12 +1018,14 @@ impl TestAddr {
 
 impl Display for TestAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match self {
-            TestAddr::Public(addr) => addr.fmt(f),
-            TestAddr::Local(addr) => addr.fmt(f),
-            TestAddr::PersistentMapping(addr) => addr.fmt(f),
-            TestAddr::TemporaryMapping(addr) => addr.fmt(f),
-        }
+        let disp: &Display = match self {
+            TestAddr::Public(ref addr) => addr,
+            TestAddr::Local(ref addr) => addr,
+            TestAddr::PersistentMapping(ref addr) => addr,
+            TestAddr::TemporaryMapping(ref addr) => addr,
+        };
+
+        disp.fmt(f)
     }
 }
 
@@ -897,6 +1040,7 @@ impl FromStr for TestAddr {
             Self::Err::new(
                 s,
                 format!("badly formed address of type '{}': {}", address_type, e),
+                0,
             )
         })?)
     }
@@ -905,6 +1049,8 @@ impl FromStr for TestAddr {
 impl MyFromStr for TestAddr {
     type MyErr = <Self as FromStr>::Err;
 }
+
+impl Address for TestAddr {}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 struct TestAddrAndPort {
@@ -955,6 +1101,7 @@ impl FromStr for TestAddrAndPort {
                     "badly formed address and port of type '{}': {}",
                     address_type, e
                 ),
+                0,
             )
         })?)
     }
@@ -1000,14 +1147,17 @@ trait TalkTarget {
 struct TestServer {
     butterfly: Server<TestNetwork>,
     addr: TestAddrAndPort,
+    idx: usize,
+    zone_id: ZoneID,
 }
 
 impl TestServer {
-    pub fn talk_to(&self, talk_targets: Vec<&TalkTarget>) {
-        let mut members = Vec::with_capacity(talk_targets.len());
-        for talk_target in talk_targets {
-            members.push(talk_target.create_member_info());
-        }
+    pub fn talk_to(&self, talk_targets: &[&TalkTarget]) {
+        let members = talk_targets
+            .iter()
+            .map(|tt| tt.create_member_info())
+            .collect();
+
         self.butterfly.member_list.set_initial_members(members);
     }
 }
@@ -1144,11 +1294,41 @@ impl Addresses {
 // TestMessage is a wrapper around the SWIM or gossip message sent by
 // a butterfly server. Contains source and destination addresses used
 // to determine a routing.
-#[derive(Debug)]
 struct TestMessage {
     source: TestAddrAndPort,
     target: TestAddrAndPort,
     bytes: Vec<u8>,
+    dbg_key: Option<SymKey>,
+    channel_type: ChannelType,
+}
+
+impl Debug for TestMessage {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let mut debug_struct = f.debug_struct("TestMessage");
+
+        match message::unwrap_wire(&self.bytes, self.dbg_key.as_ref()) {
+            Ok(plain) => match self.channel_type {
+                ChannelType::SWIM => match protobuf::parse_from_bytes::<Swim>(&plain) {
+                    Ok(parsed) => debug_struct.field("protobuf", &parsed),
+                    Err(e) => debug_struct
+                        .field("parse_error", &e)
+                        .field("invalid-plain", &plain),
+                },
+                ChannelType::Gossip => match protobuf::parse_from_bytes::<Rumor>(&plain) {
+                    Ok(parsed) => debug_struct.field("protobuf", &parsed),
+                    Err(e) => debug_struct
+                        .field("parse_error", &e)
+                        .field("invalid-plain", &plain),
+                },
+            },
+            Err(e) => debug_struct
+                .field("decrypt_error", &e)
+                .field("bytes", &self.bytes),
+        }.field("source", &self.source)
+            .field("target", &self.target)
+            .field("channel_type", &self.channel_type)
+            .finish()
+    }
 }
 
 // LockedSender is a convenience struct to make mpsc::Sender fulfill
@@ -1181,7 +1361,7 @@ impl<T> LockedSender<T> {
 // ChannelMap is a mapping from IP address to an mpsc::Sender.
 type ChannelMap = HashMap<TestAddrAndPort, LockedSender<TestMessage>>;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum ChannelType {
     SWIM,
     Gossip,
@@ -1251,6 +1431,14 @@ struct NatHole {
 impl NatHole {
     pub fn new(addr: TestAddrAndPort) -> Self {
         Self { addr }
+    }
+
+    pub fn into_additional_address(self) -> AdditionalAddress<TestAddr> {
+        AdditionalAddress {
+            address: Some(self.addr.addr),
+            swim_port: self.addr.port,
+            gossip_port: self.addr.port,
+        }
     }
 }
 
@@ -1373,6 +1561,22 @@ impl NatsKey {
 
 type NatsMap = HashMap<NatsKey, TestNat>;
 
+#[derive(Copy, Clone)]
+enum SettledZones {
+    Unique,
+    AllTheSame,
+}
+
+impl SettledZones {
+    fn from_bool(b: bool) -> SettledZones {
+        if b {
+            SettledZones::Unique
+        } else {
+            SettledZones::AllTheSame
+        }
+    }
+}
+
 // TestNetworkSwitchBoard implements the multizone setup for testing
 // the spanning ring.
 #[derive(Clone)]
@@ -1437,35 +1641,36 @@ impl TestNetworkSwitchBoard {
      */
 
     pub fn start_server_in_zone(&self, zone_id: ZoneID) -> TestServer {
-        self.start_server_in_zone_with_holes(zone_id, Vec::new())
+        self.start_server_in_zone_with_additional_addresses(zone_id, HashMap::new())
     }
 
-    pub fn start_server_in_zone_with_holes(
+    pub fn start_server_in_zone_with_additional_addresses(
         &self,
         zone_id: ZoneID,
-        holes: Vec<NatHole>,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
     ) -> TestServer {
         let addr = {
             let mut addresses = self.get_addresses_guard();
+
             addresses.generate_address_for_server(zone_id)
         };
-        self.start_server(addr, holes)
+        self.start_server(addr, tagged_additional_addresses)
     }
 
     pub fn start_public_server_in_zone(&self, zone_id: ZoneID) -> TestServer {
-        self.start_public_server_in_zone_with_holes(zone_id, Vec::new())
+        self.start_public_server_in_zone_with_additional_addresses(zone_id, HashMap::new())
     }
 
-    pub fn start_public_server_in_zone_with_holes(
+    pub fn start_public_server_in_zone_with_additional_addresses(
         &self,
         zone_id: ZoneID,
-        holes: Vec<NatHole>,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
     ) -> TestServer {
         let addr = {
             let mut addresses = self.get_addresses_guard();
             addresses.generate_public_address_for_server(zone_id)
         };
-        self.start_server(addr, holes)
+        self.start_server(addr, tagged_additional_addresses)
     }
 
     /*
@@ -1499,29 +1704,300 @@ impl TestNetworkSwitchBoard {
     }
      */
 
-    pub fn wait_for_health_all(&self, health: Health) -> bool {
-        let server_count = self.read_servers().len();
-        for l in 0..server_count {
-            for r in 0..server_count {
-                if l == r {
-                    continue;
+    pub fn wait_for_health_of_all(&self, health: Health) -> bool {
+        let servers = self.read_servers().clone();
+        let rounds = self.gossip_rounds_in(4);
+        let servers_refs = servers.iter().collect::<Vec<_>>();
+
+        self.wait_for_health_of(health, &servers_refs, &rounds)
+    }
+
+    pub fn wait_for_health_of_those<'a, T>(&self, health: Health, servers: T) -> bool
+    where
+        T: AsRef<[&'a TestServer]>,
+    {
+        let rounds = self.gossip_rounds_in(4);
+
+        self.wait_for_health_of(health, servers.as_ref(), &rounds)
+    }
+
+    pub fn wait_for_same_settled_zone(&self, servers: &[&TestServer]) -> bool {
+        self.wait_for_disjoint_settled_zones(&[servers])
+    }
+
+    pub fn wait_for_splitted_same_zone<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
+        self.wait_for_settled_zones(disjoint_servers, false)
+    }
+
+    pub fn wait_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
+        self.wait_for_settled_zones(disjoint_servers, true)
+    }
+
+    fn wait_for_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+        full: bool
+    ) -> bool {
+        self.dsz_assert_assumptions(disjoint_servers, SettledZones::from_bool(full));
+        let rounds = self.gossip_rounds_in(4);
+        let all_servers = {
+            let mut all_servers = Vec::new();
+
+            for servers in disjoint_servers {
+                for server in servers.as_ref() {
+                    all_servers.push(*server);
                 }
-                if !self.wait_for_health_of(l, r, health) {
+            }
+
+            all_servers
+        };
+
+        loop {
+            if self.check_for_disjoint_settled_zones(disjoint_servers, full) {
+                return true;
+            }
+
+            if self.reached_max_rounds(&all_servers, &rounds) {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    fn check_for_disjoint_settled_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+        with_relationship_checks: bool,
+    ) -> bool {
+        if !self.dsz_check_equal_zones(disjoint_servers) {
+            return false;
+        }
+        if !self.dsz_check_unique_zone_count(disjoint_servers) {
+            return false;
+        }
+        if with_relationship_checks && !self.dsz_check_relationships(disjoint_servers) {
+            return false;
+        }
+
+        true
+    }
+
+    fn dsz_assert_assumptions<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+        settled_zones: SettledZones
+    ) {
+        let mut ids = Vec::new();
+        let mut indices = Vec::new();
+
+        assert!(!disjoint_servers.is_empty());
+        for servers_to_ref in disjoint_servers {
+            let servers = servers_to_ref.as_ref();
+
+            assert!(!servers.is_empty());
+
+            let zone_id = servers[0].zone_id;
+
+            match settled_zones {
+                SettledZones::Unique => {
+                    assert!(!ids.contains(&zone_id));
+                    ids.push(zone_id);
+                }
+                SettledZones::AllTheSame => {
+                    if ids.is_empty() {
+                        ids.push(zone_id);
+                    } else {
+                        assert!(ids[0] == zone_id);
+                    }
+                }
+            }
+
+            assert!(!indices.contains(&servers[0].idx));
+            indices.push(servers[0].idx);
+            for server in servers.iter().skip(1) {
+                assert!(server.zone_id == zone_id);
+                assert!(!indices.contains(&server.idx));
+                indices.push(server.idx);
+            }
+        }
+    }
+
+    fn dsz_check_equal_zones<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
+        for servers in disjoint_servers {
+            for pair in servers.as_ref().windows(2) {
+                let s0 = &pair[0];
+                let s1 = &pair[1];
+
+                assert!(s0.zone_id == s1.zone_id);
+                if !s0.butterfly.is_zone_settled() {
                     return false;
                 }
-                if !self.wait_for_health_of(r, l, health) {
+                if !s1.butterfly.is_zone_settled() {
+                    return false;
+                }
+                if s0.butterfly.get_settled_zone_id() != s1.butterfly.get_settled_zone_id() {
                     return false;
                 }
             }
         }
+
         true
     }
 
-    fn start_server(&self, addr: TestAddrAndPort, _holes: Vec<NatHole>) -> TestServer {
+    fn dsz_check_unique_zone_count<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
+        let mut zone_uuids = disjoint_servers
+            .iter()
+            .filter_map(|v| {
+                v.as_ref()
+                    .first()
+                    .map(|s| s.butterfly.get_settled_zone_id())
+            })
+            .collect::<Vec<_>>();
+
+        zone_uuids.sort_unstable();
+        zone_uuids.dedup();
+        zone_uuids.len() == disjoint_servers.len()
+    }
+
+    fn dsz_check_relationships<'a, T: AsRef<[&'a TestServer]>>(
+        &self,
+        disjoint_servers: &[T],
+    ) -> bool {
+        let all_test_and_real_zone_id_pairs = disjoint_servers
+            .iter()
+            .map(|servers_to_ref| {
+                let servers = servers_to_ref.as_ref();
+
+                (
+                    servers[0].zone_id,
+                    servers[0].butterfly.get_settled_zone_id(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut dbg = DbgVec::new("relationship check".to_string());
+        dbg.push(format!("test zones and real zones: {:#?}", all_test_and_real_zone_id_pairs));
+
+        for servers in disjoint_servers {
+            let this_test_zone_id = servers.as_ref()[0].zone_id;
+            let (maybe_real_parent_zone_id, real_my_own_zone_id, real_child_zone_ids) = self
+                .dsz_get_related_real_zone_ids(this_test_zone_id, &all_test_and_real_zone_id_pairs);
+            let set = real_child_zone_ids.iter().collect::<HashSet<_>>();
+
+            dbg.push(format!("real ids for test id {}, parent: {:#?}, my own: {:#?}, children: {:#?}", this_test_zone_id, maybe_real_parent_zone_id, real_my_own_zone_id, real_child_zone_ids));
+
+            for server in servers.as_ref() {
+                let zone_list = server.butterfly.read_zone_list();
+                let zone = match zone_list.zones.get(&real_my_own_zone_id) {
+                    Some(zone) => zone,
+                    None => {
+                        dbg.push(format!("no info about own zone?"));
+                        return false;
+                    }
+                };
+                dbg.push(format!("zone for {}({}): {:#?}", server.idx, server.butterfly.member_id(), zone));
+
+                match (&maybe_real_parent_zone_id, zone.has_parent_zone_id()) {
+                    (&Some(ref id), true) => {
+                        if id != zone.get_parent_zone_id() {
+                            dbg.push(format!("expected parent zone id to be {}, got {}", id, zone.get_parent_zone_id()));
+                            if let Some(parent_zone) = zone_list.zones.get(id) {
+                                dbg.push(format!("expected parent zone: {:#?}", parent_zone));
+                            } else {
+                                dbg.push("no info about expected parent zone");
+                            }
+                            if let Some(parent_zone) = zone_list.zones.get(zone.get_parent_zone_id()) {
+                                dbg.push(format!("actual parent zone: {:#?}", parent_zone));
+                            } else {
+                                dbg.push("no info about actual parent zone");
+                            }
+                            return false;
+                        }
+                    }
+                    (None, false) => {}
+                    (_, _) => {
+                        dbg.push(format!("mismatch between having and not having a parent ({:?} vs {})", maybe_real_parent_zone_id, zone.get_parent_zone_id()));
+                        return false;
+                    }
+                }
+
+                let zone_set = zone.get_child_zone_ids().iter().collect::<HashSet<_>>();
+
+                if set.symmetric_difference(&zone_set).next().is_some() {
+                    dbg.push("child zones of the server:");
+                    for zone_id in zone_set {
+                        if let Some(child_zone) = zone_list.zones.get(zone_id) {
+                            dbg.push(format!("{:#?}", child_zone));
+                        } else {
+                            dbg.push(format!("no info about child zone {}", zone_id));
+                        }
+                    }
+
+                    dbg.push("expected child zones:");
+                    for zone_id in set {
+                        if let Some(child_zone) = zone_list.zones.get(zone_id) {
+                            dbg.push(format!("{:#?}", child_zone));
+                        } else {
+                            dbg.push(format!("no info about child zone {}", zone_id));
+                        }
+                    }
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn dsz_get_related_real_zone_ids(
+        &self,
+        this_test_zone_id: ZoneID,
+        all_test_and_real_zone_id_pairs: &[(ZoneID, String)],
+    ) -> (Option<String>, String, Vec<String>) {
+        let zone_map = self.read_zones();
+        let mut maybe_parent = None;
+        let mut my_own = String::new();
+        let mut children = Vec::new();
+
+        for pair in all_test_and_real_zone_id_pairs {
+            if this_test_zone_id == pair.0 {
+                assert!(my_own.is_empty());
+                my_own = pair.1.clone();
+                continue;
+            }
+            if zone_map.is_zone_child_of(this_test_zone_id, pair.0) {
+                assert!(maybe_parent.is_none());
+                maybe_parent = Some(pair.1.clone());
+                continue;
+            }
+            if zone_map.is_zone_child_of(pair.0, this_test_zone_id) {
+                children.push(pair.1.clone());
+            }
+        }
+
+        (maybe_parent, my_own, children)
+    }
+
+    fn start_server(
+        &self,
+        addr: TestAddrAndPort,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
+    ) -> TestServer {
         let network = self.create_test_network(addr);
         let mut servers = self.write_servers();
         let idx = servers.len();
-        let server = self.create_test_server(network, idx as u64);
+        let server = self.create_test_server(network, idx, tagged_additional_addresses);
         servers.push(server.clone());
         server
     }
@@ -1529,19 +2005,28 @@ impl TestNetworkSwitchBoard {
     fn create_test_network(&self, addr: TestAddrAndPort) -> TestNetwork {
         let (swim_in, swim_out) = self.start_routing_thread(addr, ChannelType::SWIM);
         let (gossip_in, gossip_out) = self.start_routing_thread(addr, ChannelType::Gossip);
-        TestNetwork::new(addr, swim_in, swim_out, gossip_in, gossip_out)
+        TestNetwork::new(addr, swim_in, swim_out, gossip_in, gossip_out, None)
     }
 
-    fn create_test_server(&self, network: TestNetwork, idx: u64) -> TestServer {
+    fn create_test_server(
+        &self,
+        network: TestNetwork,
+        idx: usize,
+        tagged_additional_addresses: TaggedAddressesFromAddress<TestAddr>,
+    ) -> TestServer {
         let addr = network.get_addr();
         let member = create_member_from_addr(addr);
         let trace = Trace::default();
         let ring_key = None;
         let name = None;
         let data_path = None::<PathBuf>;
-        let suitability = Box::new(TestSuitability(idx));
+        let suitability = Box::new(TestSuitability(idx as u64));
+        let host_address = network
+            .get_host_address()
+            .expect("failed to get host address");
         let mut butterfly = Server::new(
             network,
+            host_address,
             member,
             trace,
             ring_key,
@@ -1550,30 +2035,64 @@ impl TestNetworkSwitchBoard {
             suitability,
         );
         let timing = Timing::default();
+        let zone_id = addr.get_zone_id();
+
+        butterfly.merge_additional_addresses(tagged_additional_addresses);
         butterfly.start(timing).expect("failed to start server");
-        TestServer { butterfly, addr }
+
+        TestServer {
+            butterfly,
+            addr,
+            idx,
+            zone_id,
+        }
     }
 
-    fn wait_for_health_of(&self, from_idx: usize, to_idx: usize, health: Health) -> bool {
-        let rounds_in = self.gossip_rounds_in(4);
+    fn wait_for_health_of(
+        &self,
+        health: Health,
+        servers: &[&TestServer],
+        rounds: &Vec<isize>,
+    ) -> bool {
+        for lserver in servers {
+            for rserver in servers {
+                if lserver.idx == rserver.idx {
+                    continue;
+                }
+                if !self.wait_for_health_of_pair(health, lserver, rserver, &rounds) {
+                    return false;
+                }
+                if !self.wait_for_health_of_pair(health, rserver, lserver, &rounds) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn wait_for_health_of_pair(
+        &self,
+        health: Health,
+        from: &TestServer,
+        to: &TestServer,
+        rounds: &[isize],
+    ) -> bool {
         loop {
-            if let Some(member_health) = self.health_of(from_idx, to_idx) {
+            if let Some(member_health) = self.health_of_pair(from, to) {
                 if member_health == health {
                     return true;
                 }
             }
-            if self.reached_max_rounds(&rounds_in) {
+            if self.reached_max_rounds(&vec![from, to], rounds) {
                 return false;
             }
             thread::sleep(Duration::from_millis(500));
         }
     }
 
-    pub fn reached_max_rounds(&self, rounds_in: &Vec<isize>) -> bool {
-        let servers = self.read_servers();
-        for (idx, round) in rounds_in.into_iter().enumerate() {
-            let server = &servers[idx];
-            if server.butterfly.paused() || server.butterfly.swim_rounds() > *round {
+    pub fn reached_max_rounds(&self, servers: &[&TestServer], rounds: &[isize]) -> bool {
+        for server in servers {
+            if server.butterfly.paused() || server.butterfly.swim_rounds() > rounds[server.idx] {
                 continue;
             }
             return false;
@@ -1581,29 +2100,28 @@ impl TestNetworkSwitchBoard {
         true
     }
 
-    fn health_of(&self, from_idx: usize, to_idx: usize) -> Option<Health> {
-        let servers = self.read_servers();
-        let to_member = servers[to_idx]
-            .butterfly
-            .member
-            .read()
-            .expect("Member lock is poisoned");
-        servers[from_idx]
+    fn health_of_pair(&self, from: &TestServer, to: &TestServer) -> Option<Health> {
+        let maybe_health = from
             .butterfly
             .member_list
-            .health_of(&to_member)
-    }
+            .health_of(&to.butterfly.read_member());
 
-    fn gossip_rounds(&self) -> Vec<isize> {
-        let servers = self.read_servers();
-        servers
-            .iter()
-            .map(|s| s.butterfly.gossip_rounds())
-            .collect()
+        println!("{} sees {} as {:?}", from.addr, to.addr, maybe_health,);
+
+        maybe_health
     }
 
     fn gossip_rounds_in(&self, count: isize) -> Vec<isize> {
         self.gossip_rounds().iter().map(|r| r + count).collect()
+    }
+
+    fn gossip_rounds(&self) -> Vec<isize> {
+        let servers = self.read_servers();
+
+        servers
+            .iter()
+            .map(|s| s.butterfly.gossip_rounds())
+            .collect()
     }
 
     fn start_routing_thread(
@@ -1629,6 +2147,8 @@ impl TestNetworkSwitchBoard {
     }
 
     fn process_msg(&self, mut msg: TestMessage, channel_type: ChannelType) {
+        let src = msg.source;
+        let tgt = msg.target;
         let source_zone_id = match &msg.source.addr {
             &TestAddr::Public(ref pip) => pip.get_zone_id(),
             &TestAddr::Local(ref lip) => lip.get_zone_id(),
@@ -1654,15 +2174,21 @@ impl TestNetworkSwitchBoard {
                         if let Some(nat) = nats.get(&nats_key) {
                             if !nat.can_route(&mut msg, &traversal_info) {
                                 can_route = false;
+                                println!("ROUTING: can't route {:#?} from {} to {}, there is a route, but it's unreachable", msg, src, tgt);
                                 break;
                             }
                         } else {
                             can_route = false;
+                            println!("ROUTING: can't route {:#?} from {} to {}, there is a route, but no nat registered", msg, src, tgt);
                             break;
                         }
                     }
                     can_route
                 } else {
+                    println!(
+                        "ROUTING: can't route {:#?} from {} to {}, no route",
+                        msg, src, tgt
+                    );
                     false
                 }
             }
@@ -1679,9 +2205,17 @@ impl TestNetworkSwitchBoard {
                         if let Some(nat) = nats.get(&nats_key) {
                             routed = nat.route(&mut msg);
                             if !routed {
+                                println!(
+                                    "ROUTING: can't {:#?} route from {} to {}, no mapping",
+                                    msg, src, tgt
+                                );
                                 break;
                             }
                         } else {
+                            println!(
+                                "ROUTING: can't route {:#?} from {} to {}, no registered nat",
+                                msg, src, tgt
+                            );
                             routed = false;
                         }
                     }
@@ -1706,8 +2240,14 @@ impl TestNetworkSwitchBoard {
                     let mut map = self.write_channel_map(channel_type);
                     map.remove(&target);
                 }
+            } else {
+                println!(
+                    "ROUTING: couldn't send a message {:#?} from {} to {}, no out",
+                    msg, src, tgt
+                );
             }
         }
+        //println!("source: {}, target: {}, channel type: {:?}, can route across zones: {}, routed: {}", src, tgt, channel_type, can_route_across_zones, routed);
     }
 
     /*
@@ -1810,6 +2350,7 @@ impl TestNetworkSwitchBoard {
 struct TestSwimSender {
     addr: TestAddrAndPort,
     sender: LockedSender<TestMessage>,
+    dbg_key: Option<SymKey>,
 }
 
 impl SwimSender<TestAddrAndPort> for TestSwimSender {
@@ -1818,6 +2359,8 @@ impl SwimSender<TestAddrAndPort> for TestSwimSender {
             source: self.addr,
             target: addr,
             bytes: buf.to_owned(),
+            dbg_key: self.dbg_key.clone(),
+            channel_type: ChannelType::SWIM,
         };
         self.sender.send(msg).map_err(|_| {
             Error::SwimSendError("Receiver part of the channel is disconnected".to_owned())
@@ -1835,9 +2378,17 @@ impl SwimReceiver<TestAddrAndPort> for TestSwimReceiver {
         let msg = self.0.recv().map_err(|_| {
             Error::SwimReceiveError("Sender part of the channel is disconnected".to_owned())
         })?;
-        let len = cmp::min(msg.bytes.len(), buf.len());
-        buf[..len].copy_from_slice(&msg.bytes);
-        Ok((len, msg.source))
+        if buf.len() < msg.bytes.len() {
+            panic!(
+                "allowed buffer has length {}, but message from {} to {} is larger ({})",
+                buf.len(),
+                msg.source,
+                msg.target,
+                msg.bytes.len(),
+            );
+        }
+        buf[..msg.bytes.len()].copy_from_slice(&msg.bytes);
+        Ok((msg.bytes.len(), msg.source))
     }
 }
 
@@ -1847,6 +2398,7 @@ struct TestGossipSender {
     source: TestAddrAndPort,
     target: TestAddrAndPort,
     sender: Sender<TestMessage>,
+    dbg_key: Option<SymKey>,
 }
 
 impl GossipSender for TestGossipSender {
@@ -1855,6 +2407,8 @@ impl GossipSender for TestGossipSender {
             source: self.source,
             target: self.target,
             bytes: buf.to_vec(),
+            dbg_key: self.dbg_key.clone(),
+            channel_type: ChannelType::Gossip,
         };
         self.sender.send(msg).map_err(|_| {
             Error::GossipSendError("Receiver part of the channel is disconnected".to_owned())
@@ -1885,6 +2439,7 @@ struct TestNetwork {
     swim_out: Mutex<Option<Receiver<TestMessage>>>,
     gossip_in: LockedSender<TestMessage>,
     gossip_out: Mutex<Option<Receiver<TestMessage>>>,
+    dbg_key: Option<SymKey>,
 }
 
 impl TestNetwork {
@@ -1894,6 +2449,7 @@ impl TestNetwork {
         swim_out: Receiver<TestMessage>,
         gossip_in: Sender<TestMessage>,
         gossip_out: Receiver<TestMessage>,
+        dbg_key: Option<SymKey>,
     ) -> Self {
         Self {
             addr: addr,
@@ -1901,6 +2457,7 @@ impl TestNetwork {
             swim_out: Mutex::new(Some(swim_out)),
             gossip_in: LockedSender::new(gossip_in),
             gossip_out: Mutex::new(Some(gossip_out)),
+            dbg_key: dbg_key,
         }
     }
 
@@ -1916,6 +2473,10 @@ impl Network for TestNetwork {
     type GossipSender = TestGossipSender;
     type GossipReceiver = TestGossipReceiver;
 
+    fn get_host_address(&self) -> Result<TestAddr> {
+        Ok(self.addr.get_address())
+    }
+
     fn get_swim_addr(&self) -> TestAddrAndPort {
         self.addr
     }
@@ -1924,11 +2485,13 @@ impl Network for TestNetwork {
         Ok(Self::SwimSender {
             addr: self.addr,
             sender: LockedSender::new(self.swim_in.cloned_sender()),
+            dbg_key: self.dbg_key.clone(),
         })
     }
 
     fn create_swim_receiver(&self) -> Result<Self::SwimReceiver> {
-        match self.swim_out
+        match self
+            .swim_out
             .lock()
             .expect("SWIM receiver lock is poisoned")
             .take()
@@ -1949,11 +2512,13 @@ impl Network for TestNetwork {
             source: self.addr,
             target: addr,
             sender: self.gossip_in.cloned_sender(),
+            dbg_key: self.dbg_key.clone(),
         })
     }
 
     fn create_gossip_receiver(&self) -> Result<Self::GossipReceiver> {
-        match self.gossip_out
+        match self
+            .gossip_out
             .lock()
             .expect("Gossip receiver lock is poisoned")
             .take()
