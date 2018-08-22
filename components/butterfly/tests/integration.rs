@@ -18,8 +18,8 @@ extern crate habitat_butterfly;
 extern crate habitat_butterfly_test as btest;
 extern crate env_logger;
 extern crate habitat_core;
-extern crate time;
 extern crate protobuf;
+extern crate time;
 
 mod encryption;
 mod nat;

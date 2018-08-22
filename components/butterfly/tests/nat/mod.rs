@@ -19,7 +19,9 @@ use protobuf;
 
 use habitat_butterfly::error::{Error, Result};
 use habitat_butterfly::member::{Health, Member};
-use habitat_butterfly::message::{self, swim::{Rumor, Swim}};
+use habitat_butterfly::message::{
+    self, swim::{Rumor, Swim},
+};
 use habitat_butterfly::network::{
     Address, AddressAndPort, GossipReceiver, GossipSender, MyFromStr, Network, SwimReceiver,
     SwimSender,
@@ -1269,23 +1271,23 @@ impl Debug for TestMessage {
                 ChannelType::SWIM => match protobuf::parse_from_bytes::<Swim>(&plain) {
                     Ok(parsed) => debug_struct.field("protobuf", &parsed),
                     Err(e) => debug_struct
-                            .field("parse_error", &e)
-                            .field("invalid-plain", &plain),
-                }
+                        .field("parse_error", &e)
+                        .field("invalid-plain", &plain),
+                },
                 ChannelType::Gossip => match protobuf::parse_from_bytes::<Rumor>(&plain) {
                     Ok(parsed) => debug_struct.field("protobuf", &parsed),
                     Err(e) => debug_struct
                         .field("parse_error", &e)
                         .field("invalid-plain", &plain),
-                }
-            }
+                },
+            },
             Err(e) => debug_struct
                 .field("decrypt_error", &e)
-                .field("bytes", &self.bytes)
-        }            .field("source", &self.source)
+                .field("bytes", &self.bytes),
+        }.field("source", &self.source)
             .field("target", &self.target)
             .field("channel_type", &self.channel_type)
-.finish()
+            .finish()
     }
 }
 
@@ -1887,7 +1889,10 @@ impl TestNetworkSwitchBoard {
                     }
                     can_route
                 } else {
-                    println!("ROUTING: can't route {:#?} from {} to {}, no route", msg, src, tgt);
+                    println!(
+                        "ROUTING: can't route {:#?} from {} to {}, no route",
+                        msg, src, tgt
+                    );
                     false
                 }
             }
@@ -1904,11 +1909,17 @@ impl TestNetworkSwitchBoard {
                         if let Some(nat) = nats.get(&nats_key) {
                             routed = nat.route(&mut msg);
                             if !routed {
-                                println!("ROUTING: can't {:#?} route from {} to {}, no mapping", msg, src, tgt);
+                                println!(
+                                    "ROUTING: can't {:#?} route from {} to {}, no mapping",
+                                    msg, src, tgt
+                                );
                                 break;
                             }
                         } else {
-                            println!("ROUTING: can't route {:#?} from {} to {}, no registered nat", msg, src, tgt);
+                            println!(
+                                "ROUTING: can't route {:#?} from {} to {}, no registered nat",
+                                msg, src, tgt
+                            );
                             routed = false;
                         }
                     }
@@ -1934,7 +1945,10 @@ impl TestNetworkSwitchBoard {
                     map.remove(&target);
                 }
             } else {
-                println!("ROUTING: couldn't send a message {:#?} from {} to {}, no out", msg, src, tgt);
+                println!(
+                    "ROUTING: couldn't send a message {:#?} from {} to {}, no out",
+                    msg, src, tgt
+                );
             }
         }
         //println!("source: {}, target: {}, channel type: {:?}, can route across zones: {}, routed: {}", src, tgt, channel_type, can_route_across_zones, routed);
@@ -2040,7 +2054,7 @@ impl TestNetworkSwitchBoard {
 struct TestSwimSender {
     addr: TestAddrAndPort,
     sender: LockedSender<TestMessage>,
-    dbg_key: Option<SymKey>
+    dbg_key: Option<SymKey>,
 }
 
 impl SwimSender<TestAddrAndPort> for TestSwimSender {
@@ -2088,7 +2102,7 @@ struct TestGossipSender {
     source: TestAddrAndPort,
     target: TestAddrAndPort,
     sender: Sender<TestMessage>,
-    dbg_key: Option<SymKey>
+    dbg_key: Option<SymKey>,
 }
 
 impl GossipSender for TestGossipSender {
