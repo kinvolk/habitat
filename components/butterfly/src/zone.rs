@@ -24,8 +24,8 @@ use std::str::FromStr;
 use protobuf::RepeatedField;
 
 use message::{
-    swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumorType, Zone as ProtoZone}, BfUuid,
-    UuidSimple,
+    swim::{Rumor as ProtoRumor, Rumor_Type as ProtoRumorType, Zone as ProtoZone},
+    BfUuid, UuidSimple,
 };
 use network::Address;
 use rumor::RumorKey;
