@@ -27,9 +27,10 @@ use protobuf::{Message, RepeatedField};
 use time::SteadyTime;
 
 use member::{Health, Member};
-use message::{BfUuid, swim::{
-    Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type, ZoneChange,
-}};
+use message::{
+    swim::{Ack, Member as ProtoMember, Ping, PingReq, Rumor_Type, Swim, Swim_Type, ZoneChange},
+    BfUuid,
+};
 use network::{AddressAndPort, Network, SwimSender};
 use rumor::RumorKey;
 use server::timing::Timing;
@@ -178,7 +179,11 @@ impl<N: Network> Outbound<N> {
         reachable
     }
 
-    fn directly_reachable_internal(server: &Server<N>, member: &Member, dbg: &mut ReachableDbg) -> bool {
+    fn directly_reachable_internal(
+        server: &Server<N>,
+        member: &Member,
+        dbg: &mut ReachableDbg,
+    ) -> bool {
         dbg.our_member = server.read_member().clone();
         dbg.their_member = member.clone();
         dbg.our_zone = server
@@ -398,7 +403,8 @@ pub fn create_to_member<AP: AddressAndPort>(addr: AP, target: &Member) -> ProtoM
             let mut zone_id = String::new();
 
             for zone_address in target.get_additional_addresses() {
-                if zone_address.get_address() == address_str && zone_address.get_swim_port() == port {
+                if zone_address.get_address() == address_str && zone_address.get_swim_port() == port
+                {
                     zone_id = zone_address.get_zone_id().to_string();
                     break;
                 }

@@ -387,7 +387,7 @@ impl<N: Network> PushWorker<N> {
     fn get_member_address(&self, member: &Member) -> <N as Network>::AddressAndPort {
         match member.gossip_socket_address_for_zone(self.server.read_member().get_zone_id()) {
             Some(addr) => addr,
-            None => member.gossip_socket_address()
+            None => member.gossip_socket_address(),
         }
     }
 }
