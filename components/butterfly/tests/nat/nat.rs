@@ -64,10 +64,10 @@ fn sibling_zones_get_merged() {
     server1a.talk_to(&[&server1b]);
     assert!(switch_board.wait_for_health_of_those(Health::Alive, &[&server0a, &server0b]));
     assert!(switch_board.wait_for_health_of_those(Health::Alive, &[&server1a, &server1b]));
-    assert!(switch_board.wait_for_disjoint_settled_zones(&[
-        &[&server0a, &server0b],
-        &[&server1a, &server1b],
-    ]));
+    assert!(
+        switch_board
+            .wait_for_disjoint_settled_zones(&[&[&server0a, &server0b], &[&server1a, &server1b],])
+    );
 
     let server2 = switch_board.start_server_in_zone(zone);
 
@@ -97,10 +97,7 @@ fn different_zones_get_different_ids_few() {
     nat.make_route(hole0, child_server0.addr);
     parent_server0.talk_to(&[&hole0]);
     assert!(switch_board.wait_for_health_of_all(Health::Alive));
-    assert!(
-        switch_board
-            .wait_for_disjoint_settled_zones(&[&[&parent_server0], &[&child_server0]])
-    );
+    assert!(switch_board.wait_for_disjoint_settled_zones(&[&[&parent_server0], &[&child_server0]]));
 }
 
 #[test]
