@@ -2,11 +2,12 @@ extern crate habitat_butterfly;
 
 mod nat;
 
-use std::cmp::{self, Ordering};
+use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::error::Error as StdError;
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::iter;
 use std::path::PathBuf;
 use std::result::Result as StdResult;
 use std::str::FromStr;
@@ -338,10 +339,11 @@ impl ZoneMap {
 struct TestAddrParseError {
     failed_string: String,
     reason: String,
+    idx: usize,
 }
 
 impl TestAddrParseError {
-    fn new<T1, T2>(failed_string: T1, reason: T2) -> Self
+    fn new<T1, T2>(failed_string: T1, reason: T2, idx: usize) -> Self
     where
         T1: Into<String>,
         T2: Into<String>,
@@ -349,30 +351,34 @@ impl TestAddrParseError {
         Self {
             failed_string: failed_string.into(),
             reason: reason.into(),
+            idx: idx,
         }
     }
 }
 
 impl Display for TestAddrParseError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let spaces = iter::repeat(' ').take(self.idx).collect::<String>();
         write!(
             f,
-            "failed to parse TestAddr from {}: {}",
-            self.failed_string, self.reason
+            "failed to parse TestAddr at idx {}: {}\n\
+             {}\n\
+             {}^",
+            self.idx, self.reason, self.failed_string, spaces,
         )
     }
 }
 
 impl StdError for TestAddrParseError {
     fn description(&self) -> &str {
-        "failed to parse TestAddr from some string for some reason"
+        "failed to parse TestAddr from some string at some index for some reason"
     }
 }
 
 #[derive(Debug)]
 struct TestAddrParts {
     address_type: String,
-    fields: Vec<String>,
+    fields: Vec<(String, String)>,
     port: Option<u16>,
 }
 
@@ -387,6 +393,9 @@ impl FromStr for TestAddrParts {
             AddressType,
             CloseBracket,
             OpenBrace,
+            FieldName,
+            FieldSeparator,
+            FieldValue,
             CloseBrace,
             Colon,
             Port,
@@ -395,49 +404,79 @@ impl FromStr for TestAddrParts {
         let final_states = vec![State::CloseBrace, State::Port];
         let mut address_type = String::new();
         let mut fields = Vec::new();
-        let mut field = String::new();
+        let mut field_name = String::new();
+        let mut field_value = String::new();
         let mut maybe_port = None;
 
-        for c in s.chars() {
+        for (idx, c) in s.chars().enumerate() {
             match state {
                 State::Start => match c {
                     '[' => state = State::OpenBracket,
-                    _ => return Err(Self::Err::new(s, "expected an opening bracket")),
+                    _ => return Err(Self::Err::new(s, "expected an opening bracket", idx)),
                 },
                 State::OpenBracket => match c {
                     'a' ... 'z' | '-' => {
                         address_type.push(c);
                         state = State::AddressType;
                     }
-                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type")),
+                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type", idx)),
                 }
                 State::AddressType => match c {
                     'a' ... 'z' | '-' => {
                         address_type.push(c);
                     }
                     ']' => state = State::CloseBracket,
-                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type, or a closing bracket")),
+                    _ => return Err(Self::Err::new(s, "expected an alphabetic ASCII char or a dash for the address type, or a closing bracket", idx)),
                 }
                 State::CloseBracket => match c {
                     '{' => state = State::OpenBrace,
-                    _ => return Err(Self::Err::new(s, "expected an opening brace for address contents")),
+                    _ => return Err(Self::Err::new(s, "expected an opening brace for address contents", idx)),
                 }
                 State::OpenBrace => match c {
-                    'a' ... 'z' | '0' ... '9' => field.push(c),
-                    ',' => {
-                        fields.push(field);
-                        field = String::new();
+                    'a' ... 'z' | '0' ... '9' | '-' | '_' => {
+                        field_name.push(c);
+                        state = State::FieldName;
+                    }
+                    '}' => state = State::CloseBrace,
+                    _ => return Err(Self::Err::new(s, "expected either a closing brace or ASCII alphanumeric char for a field", idx))
+                }
+                State::FieldName => match c {
+                    'a' ... 'z' | '0' ... '9' | '-' | '_' => field_name.push(c),
+                    ':' => state = State::FieldSeparator,
+                    _ => return Err(Self::Err::new(s, "expected field name or a colon", idx)),
+                }
+                State::FieldSeparator => match c {
+                    'a' ... 'z' | '0' ... '9' => {
+                        field_value.push(c);
+                        state = State::FieldValue;
                     }
                     '}' => {
-                        fields.push(field);
-                        field = String::new();
+                        fields.push((field_name, field_value));
+                        field_name = String::new();
+                        field_value = String::new();
                         state = State::CloseBrace;
                     }
-                    _ => return Err(Self::Err::new(s, "expected either a closing brace or ASCII alphanumeric char for a field"))
+                    _ => return Err(Self::Err::new(s, "expected field name or closing brace", idx)),
+                }
+                State::FieldValue => match c {
+                    'a' ... 'z' | '0' ... '9' => field_value.push(c),
+                    ',' => {
+                        fields.push((field_name, field_value));
+                        field_name = String::new();
+                        field_value = String::new();
+                        state = State::FieldName;
+                    }
+                    '}' => {
+                        fields.push((field_name, field_value));
+                        field_name = String::new();
+                        field_value = String::new();
+                        state = State::CloseBrace;
+                    }
+                    _ => return Err(Self::Err::new(s, "expected field value, field separator (,) or closing brace", idx)),
                 }
                 State::CloseBrace => match c {
                     ':' => state = State::Colon,
-                    _ => return Err(Self::Err::new(s, "expected a colon after the closing brace")),
+                    _ => return Err(Self::Err::new(s, "expected a colon after the closing brace", idx)),
                 }
                 State::Colon => match c {
                     '0' ... '9' => {
@@ -447,27 +486,40 @@ impl FromStr for TestAddrParts {
                         maybe_port = Some(port_str);
                         state = State::Port;
                     }
-                    _ => return Err(Self::Err::new(s, "expected a number after the colon")),
+                    _ => return Err(Self::Err::new(s, "expected a number after the colon", idx)),
                 }
                 State::Port => match c {
                     '0' ... '9' => maybe_port.as_mut().unwrap().push(c),
-                    _ => return Err(Self::Err::new(s, "expected a number for a port"))
+                    _ => return Err(Self::Err::new(s, "expected a number for a port", idx))
                 }
             }
         }
 
         if !final_states.contains(&state) {
-            return Err(Self::Err::new(s, "premature end of address string"));
+            let mut len = s.len();
+
+            if len > 0 {
+                len -= 1;
+            }
+            return Err(Self::Err::new(s, "premature end of address string", len));
         }
 
         let port = match maybe_port {
             Some(port_str) => {
                 let parsed_port = match port_str.parse::<u16>() {
                     Ok(port) => Ok(port),
-                    Err(e) => Err(Self::Err::new(
-                        s,
-                        format!("still failed to parse port into a u16 number: {}", e),
-                    )),
+                    Err(e) => {
+                        let mut len = s.len();
+
+                        if len > 0 {
+                            len -= 1;
+                        }
+                        Err(Self::Err::new(
+                            s,
+                            format!("still failed to parse port into a u16 number: {}", e),
+                            len,
+                        ))
+                    }
                 }?;
                 Some(parsed_port)
             }
@@ -479,6 +531,14 @@ impl FromStr for TestAddrParts {
             fields,
             port,
         })
+    }
+}
+
+fn field_name_check(actual: &str, expected: &str, idx: &str) -> StdResult<(), String> {
+    if actual != expected {
+        Err(format!("expected {} field to be '{}', got {}", idx, expected, actual))
+    } else {
+        Ok(())
     }
 }
 
@@ -511,10 +571,12 @@ impl TestPublicAddr {
             ));
         }
 
-        let zone_id = parts.fields[0]
+        field_name_check(&parts.fields[0].0, "zone-id", "first")?;
+        let zone_id = parts.fields[0].1
             .parse()
             .map_err(|e| format!("failed to get zone ID from first field: {}", e))?;
-        let idx = parts.fields[1]
+        field_name_check(&parts.fields[1].0, "idx", "second")?;
+        let idx = parts.fields[1].1
             .parse()
             .map_err(|e| format!("failed to get index from second field: {}", e))?;
 
@@ -544,7 +606,7 @@ impl TestPublicAddr {
 
 impl Display for TestPublicAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "[public]{{{},{}}}", self.zone_id, self.idx)
+        write!(f, "[public]{{zone-id:{},idx:{}}}", self.zone_id, self.idx)
     }
 }
 
@@ -555,7 +617,7 @@ impl FromStr for TestPublicAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts)
-            .map_err(|e| Self::Err::new(s, format!("badly formed public address: {}", e)))
+            .map_err(|e| Self::Err::new(s, format!("badly formed public address: {}", e), 0))
     }
 }
 
@@ -592,10 +654,12 @@ impl TestLocalAddr {
             ));
         }
 
-        let zone_id = parts.fields[0]
+        field_name_check(&parts.fields[0].0, "zone-id", "first")?;
+        let zone_id = parts.fields[0].1
             .parse()
             .map_err(|e| format!("failed to get zone ID from first field: {}", e))?;
-        let idx = parts.fields[1]
+        field_name_check(&parts.fields[1].0, "idx", "second")?;
+        let idx = parts.fields[1].1
             .parse()
             .map_err(|e| format!("failed to get index from second field: {}", e))?;
 
@@ -625,7 +689,7 @@ impl TestLocalAddr {
 
 impl Display for TestLocalAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "[local]{{{},{}}}", self.zone_id, self.idx)
+        write!(f, "[local]{{zone-id:{},idx:{}}}", self.zone_id, self.idx)
     }
 }
 
@@ -636,7 +700,7 @@ impl FromStr for TestLocalAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts)
-            .map_err(|e| Self::Err::new(s, format!("badly formed local address: {}", e)))
+            .map_err(|e| Self::Err::new(s, format!("badly formed local address: {}", e), 0))
     }
 }
 
@@ -676,10 +740,12 @@ impl TestPersistentMappingAddr {
             ));
         }
 
-        let parent_zone_id = parts.fields[0]
+        field_name_check(&parts.fields[0].0, "parent-zone-id", "first")?;
+        let parent_zone_id = parts.fields[0].1
             .parse()
             .map_err(|e| format!("failed to get parent zone ID from first field: {}", e))?;
-        let child_zone_id = parts.fields[1]
+        field_name_check(&parts.fields[1].0, "child-zone-id", "second")?;
+        let child_zone_id = parts.fields[1].1
             .parse()
             .map_err(|e| format!("failed to get child zone ID from second field: {}", e))?;
 
@@ -707,7 +773,7 @@ impl Display for TestPersistentMappingAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "[perm-map]{{{},{}}}",
+            "[perm-map]{{parent-zone-id:{},child-zone-id:{}}}",
             self.parent_zone_id, self.child_zone_id
         )
     }
@@ -720,7 +786,7 @@ impl FromStr for TestPersistentMappingAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts).map_err(|e| {
-            Self::Err::new(s, format!("badly formed persistent mapping address: {}", e))
+            Self::Err::new(s, format!("badly formed persistent mapping address: {}", e), 0)
         })
     }
 }
@@ -773,19 +839,24 @@ impl TestTemporaryMappingAddr {
             ));
         }
 
-        let parent_zone_id = parts.fields[0]
+        field_name_check(&parts.fields[0].0, "parent-zone-id", "first")?;
+        let parent_zone_id = parts.fields[0].1
             .parse()
             .map_err(|e| format!("failed to get parent zone ID from first field: {}", e))?;
-        let parent_server_idx = parts.fields[1]
+        field_name_check(&parts.fields[1].0, "parent-server-idx", "second")?;
+        let parent_server_idx = parts.fields[1].1
             .parse()
             .map_err(|e| format!("failed to get parent server index from second field: {}", e))?;
-        let child_zone_id = parts.fields[2]
+        field_name_check(&parts.fields[2].0, "child-zone-id", "third")?;
+        let child_zone_id = parts.fields[2].1
             .parse()
             .map_err(|e| format!("failed to get child zone ID from third field: {}", e))?;
-        let child_server_idx = parts.fields[3]
+        field_name_check(&parts.fields[3].0, "child-server-idx", "fourth")?;
+        let child_server_idx = parts.fields[3].1
             .parse()
             .map_err(|e| format!("failed to get child server index from fourth field: {}", e))?;
-        let random_value = parts.fields[4]
+        field_name_check(&parts.fields[4].0, "random-value", "fifth")?;
+        let random_value = parts.fields[4].1
             .parse()
             .map_err(|e| format!("failed to get random u16 value from fifth field: {}", e))?;
 
@@ -811,7 +882,7 @@ impl Display for TestTemporaryMappingAddr {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "[temp-map]{{{},{},{},{},{}}}",
+            "[temp-map]{{parent-zone-id:{},parent-server-idx:{},child-zone-id:{},child-server-idx:{},random-value:{}}}",
             self.parent_zone_id,
             self.parent_server_idx,
             self.child_zone_id,
@@ -828,7 +899,7 @@ impl FromStr for TestTemporaryMappingAddr {
         let parts = s.parse::<TestAddrParts>()?;
 
         Self::from_parts(parts).map_err(|e| {
-            Self::Err::new(s, format!("badly formed temporary mapping address: {}", e))
+            Self::Err::new(s, format!("badly formed temporary mapping address: {}", e), 0)
         })
     }
 }
@@ -901,6 +972,7 @@ impl FromStr for TestAddr {
             Self::Err::new(
                 s,
                 format!("badly formed address of type '{}': {}", address_type, e),
+                0,
             )
         })?)
     }
@@ -962,6 +1034,7 @@ impl FromStr for TestAddrAndPort {
                     "badly formed address and port of type '{}': {}",
                     address_type, e
                 ),
+                0,
             )
         })?)
     }
@@ -1644,10 +1717,14 @@ impl TestNetworkSwitchBoard {
             .member
             .read()
             .expect("Member lock is poisoned");
-        servers[from_idx]
+        let maybe_health = servers[from_idx]
             .butterfly
             .member_list
-            .health_of(&to_member)
+            .health_of(&to_member);
+
+        println!("{} sees {} as {:?}", servers[from_idx].addr, servers[to_idx].addr, maybe_health);
+
+        maybe_health
     }
 
     fn gossip_rounds(&self) -> Vec<isize> {
@@ -1685,8 +1762,8 @@ impl TestNetworkSwitchBoard {
     }
 
     fn process_msg(&self, mut msg: TestMessage, channel_type: ChannelType) {
-        let src = msg.source;
-        let tgt = msg.target;
+        //let src = msg.source;
+        //let tgt = msg.target;
         let source_zone_id = match &msg.source.addr {
             &TestAddr::Public(ref pip) => pip.get_zone_id(),
             &TestAddr::Local(ref lip) => lip.get_zone_id(),
@@ -1766,7 +1843,7 @@ impl TestNetworkSwitchBoard {
                 }
             }
         }
-        println!("source: {}, target: {}, channel type: {:?}, can route across zones: {}, routed: {}", src, tgt, channel_type, can_route_across_zones, routed);
+        //println!("source: {}, target: {}, channel type: {:?}, can route across zones: {}, routed: {}", src, tgt, channel_type, can_route_across_zones, routed);
     }
 
     /*
@@ -1894,9 +1971,17 @@ impl SwimReceiver<TestAddrAndPort> for TestSwimReceiver {
         let msg = self.0.recv().map_err(|_| {
             Error::SwimReceiveError("Sender part of the channel is disconnected".to_owned())
         })?;
-        let len = cmp::min(msg.bytes.len(), buf.len());
-        buf[..len].copy_from_slice(&msg.bytes);
-        Ok((len, msg.source))
+        if buf.len() < msg.bytes.len() {
+            panic!(
+                "allowed buffer has length {}, but message from {} to {} is larger ({})",
+                buf.len(),
+                msg.source,
+                msg.target,
+                msg.bytes.len(),
+            );
+        }
+        buf[..msg.bytes.len()].copy_from_slice(&msg.bytes);
+        Ok((msg.bytes.len(), msg.source))
     }
 }
 
